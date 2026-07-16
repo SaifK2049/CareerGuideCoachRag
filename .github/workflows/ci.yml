@@ -1,0 +1,55 @@
+name: Masari checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  static-and-functions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Verify production bundle
+        env:
+          PUBLIC_SUPABASE_URL: https://example.supabase.co
+          PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_fixture
+          PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+        run: npm run build
+      - name: Type-check Edge Functions
+        run: |
+          for file in supabase/functions/*/index.ts; do
+            npx -y deno@2.5.6 check "$file"
+          done
+
+  database-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start and verify local Supabase
+        run: |
+          npx -y supabase@2.109.1 start
+          npx -y supabase@2.109.1 db reset --local
+          npx -y supabase@2.109.1 stop
+          npx -y supabase@2.109.1 start
+          npm run test:integration
+          npx -y supabase@2.109.1 db advisors --local
+      - name: Stop local Supabase
+        if: always()
+        run: npx -y supabase@2.109.1 stop --no-backup

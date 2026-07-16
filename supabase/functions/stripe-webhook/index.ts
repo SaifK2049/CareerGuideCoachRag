@@ -11,7 +11,7 @@ Deno.serve(async (request) => {
   const webhookSecret = Deno.env.get("STRIPE_WEBHOOK_SIGNING_SECRET");
   if (!stripeKey || !webhookSecret) return new Response("Stripe webhook is not configured", { status: 503 });
   const stripe = new Stripe(stripeKey);
-  const admin = createClient(
+  const admin = createClient<any>(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     { auth: { autoRefreshToken: false, persistSession: false } },

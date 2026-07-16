@@ -1,5 +1,7 @@
 # Masari production launch plan
 
+> This document is the later paid-launch plan. Masari is currently configured for a free, invitation-only beta with billing and public signup disabled. Use [PRIVATE_BETA_LAUNCH.md](PRIVATE_BETA_LAUNCH.md) for the current deployment and acceptance gate.
+
 ## Context
 
 Masari is a private, multi-user career intelligence application. Visitors must authenticate before seeing application data. New users complete a three-step setup, then receive an account-isolated dashboard for their CV, job paths, evidence, progress, and AI analysis.
@@ -134,7 +136,7 @@ npx supabase secrets set ALLOWED_ORIGINS=https://app.YOUR_DOMAIN
 4. **Backend contract — Engineering**
    - Authenticated functions: analysis, Checkout, portal and account deletion.
    - Public function: Stripe webhook with signature verification.
-   - Test invalid tokens, malformed documents, repeated events and unavailable providers.
+   - Test invalid tokens, malformed documents, repeated events, unavailable providers and HTTP 429 retry behavior.
 
 5. **Persistence — Engineering/Owner**
    - Apply migrations, RLS policies, storage policies, uniqueness constraints and quota triggers.
@@ -178,6 +180,7 @@ npx supabase secrets set ALLOWED_ORIGINS=https://app.YOUR_DOMAIN
 - [ ] Two users see only their own CV, paths, jobs, evidence, progress and usage.
 - [ ] CV objects cannot be listed or downloaded by another user.
 - [ ] Free path, job, evidence and AI limits are rejected by the server.
+- [ ] Rapid repeated AI, Checkout, portal and deletion requests return HTTP 429 with `Retry-After`.
 - [ ] Stripe sandbox Checkout activates Premium after the signed webhook.
 - [ ] Replaying the same Stripe event does not duplicate or corrupt state.
 - [ ] Premium limits appear immediately or after a safe refresh.

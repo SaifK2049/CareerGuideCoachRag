@@ -1,13 +1,17 @@
 # Masari
 
-A private, multi-user career intelligence workspace with onboarding and recurring Premium subscriptions.
+A private, multi-user career intelligence workspace configured for a free, invitation-only beta.
 
 - uploading a CV as a PDF and extracting its text in the browser;
 - creating separate target job paths;
 - collecting job descriptions as entries;
 - adding explicit knowledge evidence;
 - measuring recurring job-skill demand against CV and knowledge evidence;
-- exporting normalized, overlapping text chunks as RAG-ready JSON.
+- running saved, cited RAG analysis with idempotent quota handling;
+- exporting a portable JSON copy of the account;
+- submitting privacy-safe beta feedback.
+
+Billing code is retained for a later paid launch, but signup and Premium controls are disabled during the private beta.
 
 ## Run
 
@@ -33,25 +37,33 @@ Production mode requires Supabase configuration and starts at the authentication
    npx supabase db push
    ```
 
-4. Store server secrets and deploy the functions:
+4. Store the private-beta server secrets and deploy the functions:
 
    ```bash
    npx supabase secrets set OPENAI_API_KEY=YOUR_KEY
-   npx supabase secrets set STRIPE_SECRET_KEY=YOUR_STRIPE_KEY
-   npx supabase secrets set STRIPE_PREMIUM_PRICE_ID=YOUR_PRICE_ID
-   npx supabase secrets set STRIPE_WEBHOOK_SIGNING_SECRET=YOUR_WEBHOOK_SECRET
+   npx supabase secrets set OPENAI_MODEL=gpt-5-mini
    npx supabase secrets set APP_URL=https://app.example.com
    npx supabase secrets set ALLOWED_ORIGINS=https://app.example.com
    npx supabase functions deploy analyze-career
-   npx supabase functions deploy create-checkout-session
-   npx supabase functions deploy create-portal-session
-   npx supabase functions deploy stripe-webhook
+   npx supabase functions deploy export-account
    npx supabase functions deploy delete-account
    ```
 
-5. Configure the hosted site URL and allowed redirect URLs in Supabase Authentication. Create a Cloudflare Turnstile widget for the hostname, enable Turnstile in Supabase Bot and Abuse Protection with its secret key, then deploy these static files.
+5. Disable public signup in hosted Supabase while leaving email/password login enabled. Configure the hosted site URL, allowed redirects, custom SMTP and admin invitations. Create a Cloudflare Turnstile widget for the hostname, enable Turnstile in Supabase Bot and Abuse Protection with its secret key, then deploy the static bundle.
 
 The migration enables row-level security on every exposed table. All policies bind records to the authenticated user. CV PDFs are stored under a user-owned path in the private `private-cvs` bucket. The OpenAI key is read only by the Edge Function.
+
+## Rate limiting
+
+Supabase Auth applies its own IP and endpoint limits to sign-in, sign-up, email, password-reset, verification and token-refresh requests. Masari adds an atomic PostgreSQL-backed limiter for authenticated Edge Functions:
+
+- AI analysis: 5 requests per 5 minutes per user, in addition to the monthly plan quota.
+- Stripe Checkout creation: 5 requests per 10 minutes per user.
+- Stripe billing portal creation: 10 requests per 10 minutes per user.
+- Account deletion: 3 attempts per hour per user.
+- Account export: 5 requests per hour per user.
+
+Exceeded requests return HTTP `429`, a `RATE_LIMITED` code and a `Retry-After` header. The limiter table is private, has explicit deny policies and can only be consumed by the service role through a locked server function.
 
 ## Verify locally
 
@@ -60,12 +72,13 @@ With Docker Desktop running:
 ```bash
 npx supabase start
 npx supabase db reset --local --no-seed --yes
+npx supabase stop && npx supabase start
 npm run check
 npm run test:integration
 npx supabase db advisors --local --type all --level info --fail-on warn
 ```
 
-The integration suite creates temporary authenticated users and verifies onboarding defaults, RLS isolation, cross-tenant rejection, Free and Premium limits, atomic AI quotas, Stripe event ordering, private CV storage, and safe server-function failures. Test users are deleted afterward.
+The integration suite creates temporary admin-invited users and verifies disabled public signup, consent, RLS isolation, concurrent rate limiting, cross-tenant rejection, beta limits, persisted/idempotent analyses, quota refunds, feedback, account export, Stripe isolation, private CV storage, and permanent account deletion. Test users are deleted afterward.
 
 ## Deploy to Cloudflare Pages
 
@@ -74,25 +87,23 @@ Configure the Pages build command as `npm run build`, the output directory as `d
 - `PUBLIC_SUPABASE_URL`
 - `PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `PUBLIC_TURNSTILE_SITE_KEY`
-- `PUBLIC_TERMS_URL`
-- `PUBLIC_PRIVACY_URL`
+- `PUBLIC_BETA_MODE=true`
+- `PUBLIC_BILLING_ENABLED=false`
+- `PUBLIC_SIGNUP_ENABLED=false`
+- `PUBLIC_FEEDBACK_ENABLED=true`
 
-The build generates browser-safe configuration and copies Cloudflare security headers into the production bundle.
+Terms and privacy URLs are optional; the bundle defaults to the included beta pages. The build generates browser-safe configuration and copies Cloudflare security headers into the production bundle.
 
-See [docs/PRODUCTION_LAUNCH.md](docs/PRODUCTION_LAUNCH.md) for the complete owner checklist, Stripe setup, architecture, test gates and rollout plan.
+See [docs/PRIVATE_BETA_LAUNCH.md](docs/PRIVATE_BETA_LAUNCH.md) for the beta acceptance gate and owner-supplied configuration. [docs/PRODUCTION_LAUNCH.md](docs/PRODUCTION_LAUNCH.md) remains the later paid-launch plan.
 
 ## RAG handoff
 
-Use Export RAG JSON to download `masari-knowledge.json`. Each document includes:
-
-- source_type: cv, knowledge, or job_description;
-- text: a normalized chunk with modest overlap;
-- metadata: path, target role, company, job title, source URL, skill, or confidence.
+Use **Export account data** to download `masari-account-export.json`. It includes the profile, CV text, paths, jobs, evidence, saved analyses and citations, audit events, feedback, and stored-file metadata. Original PDF bytes are not embedded in the JSON.
 
 The hosted analysis function embeds these chunks with `text-embedding-3-small`, persists them in private pgvector-backed storage, retrieves the most relevant chunks, and returns structured skill findings with source labels such as `D1` and `D4`.
 
 ## Delete and backup
 
-- **Backup:** use **Export RAG JSON** for a portable knowledge export.
-- **Workspace delete:** **Clear workspace data** deletes the signed-in user's career records on the next cloud sync.
-- **Account deletion:** **Delete account permanently** calls an authenticated server function that removes private CV files, revokes sessions, and deletes the user; database records cascade automatically.
+- **Backup:** use **Export account data** for a portable JSON export.
+- **Workspace delete:** **Clear workspace data** removes career records, saved analyses, and stored CV files.
+- **Account deletion:** **Delete account permanently** requires the current password, removes private CV files, revokes sessions, and deletes the user; database records cascade automatically.

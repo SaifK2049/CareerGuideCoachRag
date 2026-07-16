@@ -1,15 +1,26 @@
 const STORAGE_KEY = "career-rag-workspace-v1";
+const PRIVACY_NOTICE_VERSION = "2026-07-16";
 const config = window.CAREER_RAG_CONFIG || {};
+const betaMode = config.betaMode !== false;
+const billingEnabled = config.billingEnabled === true;
+const signupEnabled = config.signupEnabled === true;
 const cloud = config.supabaseUrl && config.supabasePublishableKey && window.supabase
   ? window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey)
   : null;
-if (config.termsUrl) document.getElementById("termsLink").href = config.termsUrl;
-if (config.privacyUrl) document.getElementById("privacyLink").href = config.privacyUrl;
+["termsLink", "appTermsLink"].forEach(function(id) {
+  if (config.termsUrl) document.getElementById(id).href = config.termsUrl;
+});
+["privacyLink", "appPrivacyLink"].forEach(function(id) {
+  if (config.privacyUrl) document.getElementById(id).href = config.privacyUrl;
+});
+document.getElementById("signupPrompt").classList.toggle("hidden", !signupEnabled);
+document.getElementById("feedbackButton").classList.toggle("hidden", config.feedbackEnabled === false);
 let session = null;
 let cloudReady = false;
 let saveQueue = Promise.resolve();
-let accountAccess = { plan: "free", status: "free", rag_used: 0, rag_limit: 2, features: {} };
+let accountAccess = { plan: "free", status: "free", rag_used: 0, rag_limit: betaMode ? 10 : 2, features: {} };
 let onboardingStep = 1;
+const pendingAnalysisRequests = {};
 const captchaTokens = { signin: "", signup: "" };
 const turnstileWidgets = { signin: null, signup: null };
 
@@ -79,7 +90,7 @@ const CERTS = {
 };
 
 const demoState = {
-  profile: { displayName: "Demo user", careerGoal: "Explore Masari", experienceLevel: "mid", country: "", onboardingComplete: true },
+  profile: { displayName: "Demo user", careerGoal: "Explore Masari", experienceLevel: "mid", country: "", onboardingComplete: true, betaTermsAcceptedAt: "2026-07-16T00:00:00.000Z", privacyNoticeVersion: PRIVACY_NOTICE_VERSION },
   activePathId: "path-cloud",
   cv: { fileName: "", text: "", uploadedAt: "" },
   paths: [{
@@ -96,7 +107,8 @@ const demoState = {
     { id: "know-1", skill: "Python", title: "Automation scripts and internal tooling", level: 3, evidence: "Built recurring data and deployment utilities in Python for operational workflows." },
     { id: "know-2", skill: "Git", title: "Team delivery workflows", level: 3, evidence: "Use Git-based review and release workflows across projects." },
     { id: "know-3", skill: "SQL", title: "Data querying", level: 2, evidence: "Working knowledge of relational queries and reporting datasets." }
-  ]
+  ],
+  analyses: []
 };
 
 let state = loadState();
@@ -127,11 +139,12 @@ function saveState() {
 
 function emptyState() {
   return {
-    profile: { displayName: "", careerGoal: "", experienceLevel: "", country: "", onboardingComplete: false },
+    profile: { displayName: "", careerGoal: "", experienceLevel: "", country: "", onboardingComplete: false, betaTermsAcceptedAt: "", privacyNoticeVersion: "" },
     activePathId: "",
     cv: { fileName: "", text: "", uploadedAt: "" },
     paths: [],
-    knowledge: []
+    knowledge: [],
+    analyses: []
   };
 }
 
@@ -142,6 +155,7 @@ async function loadCloudState() {
     cloud.from("career_paths").select("*").eq("user_id", userId).order("created_at"),
     cloud.from("job_descriptions").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
     cloud.from("knowledge_evidence").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+    cloud.from("career_analyses").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(30),
     cloud.rpc("get_my_account_access")
   ]);
   results.forEach(function(result) { if (result.error) throw result.error; });
@@ -160,16 +174,19 @@ async function loadCloudState() {
       careerGoal: profile && profile.career_goal || "",
       experienceLevel: profile && profile.experience_level || "",
       country: profile && profile.country || "",
-      onboardingComplete: Boolean(profile && profile.onboarding_complete)
+      onboardingComplete: Boolean(profile && profile.onboarding_complete),
+      betaTermsAcceptedAt: profile && profile.beta_terms_accepted_at || "",
+      privacyNoticeVersion: profile && profile.privacy_notice_version || ""
     },
     activePathId: profile && profile.active_path_id || (paths[0] && paths[0].id) || "",
     cv: { fileName: profile && profile.cv_file_name || "", text: profile && profile.cv_text || "", uploadedAt: profile && profile.cv_uploaded_at || "" },
     paths: paths,
     knowledge: (results[3].data || []).map(function(item) {
       return { id: item.id, skill: item.skill, title: item.title, level: item.confidence, evidence: item.evidence };
-    })
+    }),
+    analyses: (results[4].data || []).map(normalizeAnalysisRecord)
   };
-  accountAccess = results[4].data || accountAccess;
+  accountAccess = results[5].data || accountAccess;
 }
 
 async function deleteMissing(table, ids) {
@@ -210,7 +227,10 @@ async function persistCloudState() {
     cv_text: state.cv.text || "", cv_uploaded_at: state.cv.uploadedAt || null,
     display_name: state.profile.displayName || "", career_goal: state.profile.careerGoal || "",
     experience_level: state.profile.experienceLevel || "", country: state.profile.country || "",
-    onboarding_complete: Boolean(state.profile.onboardingComplete), updated_at: new Date().toISOString()
+    onboarding_complete: Boolean(state.profile.onboardingComplete),
+    beta_terms_accepted_at: state.profile.betaTermsAcceptedAt || null,
+    privacy_notice_version: state.profile.privacyNoticeVersion || null,
+    updated_at: new Date().toISOString()
   });
   if (profileResult.error) throw profileResult.error;
   await deleteMissing("job_descriptions", jobRows.map(function(row) { return row.id; }));
@@ -231,6 +251,60 @@ function canAdd(featureKey, currentCount) {
 function safe(value) {
   return String(value || "").replace(/[&<>'"]/g, function(char) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char];
+  });
+}
+
+function normalizeAnalysisRecord(record) {
+  return {
+    id: record.id,
+    requestId: record.request_id || record.requestId,
+    pathId: record.path_id || record.pathId,
+    targetRole: record.target_role || record.targetRole || "",
+    status: record.status || "succeeded",
+    summary: record.summary || "",
+    findings: Array.isArray(record.findings) ? record.findings : [],
+    sources: Array.isArray(record.sources) ? record.sources : [],
+    model: record.model || "",
+    createdAt: record.created_at || record.createdAt || "",
+    completedAt: record.completed_at || record.completedAt || ""
+  };
+}
+
+function renderAnalysisResult(path) {
+  const box = document.getElementById("ragResult");
+  const analysis = path && (state.analyses || []).find(function(item) {
+    return item.pathId === path.id && item.status === "succeeded";
+  });
+  if (!analysis) {
+    box.innerHTML = '<div class="empty-state">Run a cited analysis after adding your CV or knowledge evidence and at least one job description. Successful results are saved here.</div>';
+    return;
+  }
+  const sourceMap = Object.fromEntries((analysis.sources || []).map(function(source) {
+    return [source.label, source];
+  }));
+  box.innerHTML = '<div class="analysis-result"><div class="analysis-result-head"><strong>Private cited analysis</strong><span>' +
+    safe(formatDate(analysis.completedAt || analysis.createdAt)) + '</span></div><p class="analysis-summary">' +
+    safe(analysis.summary) + '</p><div class="analysis-findings">' +
+    (analysis.findings || []).map(function(item, findingIndex) {
+      const badgeClass = item.confidence === "strong" ? "good" : item.confidence === "partial" || item.confidence === "uncertain" ? "warn" : "gap";
+      return '<article class="analysis-finding"><div class="analysis-finding-head"><strong>' + safe(item.skill) +
+        '</strong><span class="skill-badge ' + badgeClass + '">' + safe(item.confidence) + '</span></div><p>' +
+        safe(item.explanation) + '</p><div class="citation-list">' +
+        (item.citations || []).map(function(label) {
+          const source = sourceMap[label] || {};
+          const title = source.title || source.source_type || "Private source";
+          const detailId = "citation-" + findingIndex + "-" + String(label).replace(/[^A-Za-z0-9-]/g, "");
+          return '<button type="button" class="citation-button" data-citation-target="' + detailId + '">' +
+            safe(label) + ' · ' + safe(title) + '</button><div class="citation-detail" id="' + detailId + '"><strong>' +
+            safe(source.source_type || "source") + (source.company ? " · " + source.company : "") +
+            '</strong><br />' + safe(source.excerpt || "The source excerpt is unavailable.") + '</div>';
+        }).join("") + '</div></article>';
+    }).join("") + '</div></div>';
+  box.querySelectorAll("[data-citation-target]").forEach(function(button) {
+    button.addEventListener("click", function() {
+      const detail = document.getElementById(button.dataset.citationTarget);
+      if (detail) detail.classList.toggle("is-visible");
+    });
   });
 }
 
@@ -306,18 +380,22 @@ function formatDate(value) {
 function renderAccount() {
   const premium = accountAccess.plan === "premium";
   const hasBilling = !["free", "canceled", "incomplete_expired"].includes(accountAccess.status || "free");
+  const betaAccess = betaMode && !premium;
   const name = state.profile.displayName || (session && session.user.email && session.user.email.split("@")[0]) || "there";
   document.getElementById("welcomeLabel").textContent = "Welcome, " + name;
   ["planBadge", "membershipBadge"].forEach(function(id) {
     const badge = document.getElementById(id);
-    badge.textContent = premium ? "Premium" : "Free";
+    badge.textContent = premium ? "Premium" : betaAccess ? "Beta" : "Free";
     badge.classList.toggle("is-premium", premium);
   });
-  document.getElementById("upgradeButton").classList.toggle("hidden", premium);
-  document.getElementById("membershipName").textContent = premium ? "Masari Premium" : "Masari Free";
+  document.getElementById("upgradeButton").classList.toggle("hidden", premium || !billingEnabled);
+  document.getElementById("membershipActionButton").classList.toggle("hidden", !billingEnabled);
+  document.getElementById("membershipName").textContent = premium ? "Masari Premium" : betaAccess ? "Masari Private Beta" : "Masari Free";
   document.getElementById("membershipDescription").textContent = premium
     ? "Advanced career analysis and planning are active."
-    : "Build your baseline with limited monthly AI analysis.";
+    : betaAccess
+      ? "Your invited beta access includes private cloud storage and cited analysis."
+      : "Build your baseline with limited monthly AI analysis.";
   const used = Number(accountAccess.rag_used || 0);
   const limit = Number(accountAccess.rag_limit || 0);
   document.getElementById("analysisUsage").textContent = used + " / " + (limit || "—");
@@ -341,6 +419,7 @@ function render() {
     document.getElementById("topGapStat").textContent = "Add data";
     renderSkills([]);
     renderFocus([]);
+    renderAnalysisResult(null);
     renderJobs(document.getElementById("recentJobs"), []);
     document.getElementById("pathList").innerHTML = '<div class="empty-state">Create your first job path.</div>';
     document.getElementById("pathJobs").innerHTML = '<div class="empty-state">No jobs yet.</div>';
@@ -365,6 +444,7 @@ function render() {
   document.getElementById("topGapFoot").textContent = top ? top.demand + " demand signal" + (top.demand === 1 ? "" : "s") : "from job demand";
   renderSkills(items);
   renderFocus(items);
+  renderAnalysisResult(path);
   renderJobs(document.getElementById("recentJobs"), path.jobs.slice(0, 5));
   renderPaths(path);
   renderKnowledge();
@@ -484,13 +564,55 @@ function toast(message) {
   box._timer = setTimeout(function() { box.classList.remove("is-visible"); }, 2600);
 }
 
-function exportRag() {
-  const payload = { schema_version: "1.0", exported_at: new Date().toISOString(), workspace: "Masari", active_path: activePath() ? activePath().name : "", documents: ragDocuments() };
+async function functionErrorMessage(error, fallback) {
+  try {
+    const context = error && error.context;
+    if (context && typeof context.clone === "function") {
+      const payload = await context.clone().json();
+      if (payload.code === "RATE_LIMITED") {
+        return "Too many requests. Try again in " + Number(payload.retry_after_seconds || 1) + " seconds.";
+      }
+      if (payload.error) return payload.error;
+    }
+  } catch (_error) {}
+  return error && error.message || fallback;
+}
+
+function downloadJson(payload, fileName) {
   const link = document.createElement("a");
   link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
-  link.download = "masari-knowledge.json";
+  link.download = fileName;
   link.click();
-  toast(payload.documents.length + " RAG documents exported");
+  window.setTimeout(function() { URL.revokeObjectURL(link.href); }, 1000);
+}
+
+async function exportAccount() {
+  if (config.localPreview) {
+    downloadJson({
+      schema_version: "1.0",
+      product: "Masari",
+      exported_at: new Date().toISOString(),
+      local_preview: true,
+      workspace: state,
+      rag_documents: ragDocuments()
+    }, "masari-account-export.json");
+    toast("Preview account data exported");
+    return;
+  }
+  if (!cloud || !session) { toast("Sign in before exporting account data"); return; }
+  const button = document.getElementById("exportButton");
+  button.disabled = true;
+  try {
+    await saveQueue;
+    const result = await cloud.functions.invoke("export-account", { body: {} });
+    if (result.error) throw result.error;
+    downloadJson(result.data, "masari-account-export.json");
+    toast("Private account data exported");
+  } catch (error) {
+    toast(await functionErrorMessage(error, "Account export failed"));
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function extractPdf(file) {
@@ -503,7 +625,11 @@ async function extractPdf(file) {
     const content = await page.getTextContent();
     pages.push(content.items.map(function(item) { return item.str; }).join(" "));
   }
-  return pages.join("\n\n");
+  const extracted = pages.join("\n\n").replace(/[ \t]+/g, " ").trim();
+  if (extracted.length < 50) {
+    throw new Error("This PDF appears to be scanned or image-only. Paste the CV text, or upload a text-based PDF.");
+  }
+  return extracted;
 }
 
 function setView(view) {
@@ -542,7 +668,17 @@ function showSignedInSurface() {
   } else {
     showSurface("app");
     render();
+    if (betaMode && !hasCurrentBetaConsent()) {
+      window.setTimeout(function() { openModal("betaConsentModal"); }, 0);
+    }
   }
+}
+
+function hasCurrentBetaConsent() {
+  return Boolean(
+    state.profile.betaTermsAcceptedAt &&
+    state.profile.privacyNoticeVersion === PRIVACY_NOTICE_VERSION
+  );
 }
 
 async function refreshAccountAccess() {
@@ -585,9 +721,13 @@ document.querySelectorAll("[data-open-modal]").forEach(function(button) {
     else openJobModal();
   });
 });
-document.querySelectorAll(".modal-backdrop").forEach(function(backdrop) { backdrop.addEventListener("click", function(event) { if (event.target === backdrop) closeModal(backdrop.id); }); });
+document.querySelectorAll(".modal-backdrop").forEach(function(backdrop) {
+  backdrop.addEventListener("click", function(event) {
+    if (event.target === backdrop && backdrop.id !== "betaConsentModal") closeModal(backdrop.id);
+  });
+});
 document.getElementById("editPathButton").addEventListener("click", function() { openPathModal(activePath()); });
-document.getElementById("exportButton").addEventListener("click", exportRag);
+document.getElementById("exportButton").addEventListener("click", exportAccount);
 document.getElementById("authButton").addEventListener("click", async function() {
   if (config.localPreview) {
     toast("Preview mode has no account session to sign out from");
@@ -614,6 +754,10 @@ document.getElementById("authForm").addEventListener("submit", async function(ev
 document.getElementById("signupForm").addEventListener("submit", async function(event) {
   event.preventDefault();
   const message = document.getElementById("signupMessage");
+  if (!signupEnabled) {
+    message.textContent = "Masari is currently invite-only. Ask the beta owner for an invitation.";
+    return;
+  }
   message.classList.remove("is-success");
   if (!requireCaptcha("signup", message)) return;
   message.textContent = "Creating your private workspace…";
@@ -632,6 +776,10 @@ document.getElementById("signupForm").addEventListener("submit", async function(
 });
 
 document.getElementById("showSignupButton").addEventListener("click", function() {
+  if (!signupEnabled) {
+    document.getElementById("authMessage").textContent = "Masari is currently invite-only.";
+    return;
+  }
   document.getElementById("signInPanel").classList.add("hidden");
   document.getElementById("signupPanel").classList.remove("hidden");
   ensureTurnstile("signup");
@@ -668,6 +816,37 @@ document.getElementById("resetPasswordForm").addEventListener("submit", async fu
   toast("Your password has been updated");
 });
 document.getElementById("onboardingSignoutButton").addEventListener("click", function() { cloud.auth.signOut({ scope: "local" }); });
+document.getElementById("betaConsentSignoutButton").addEventListener("click", function() { cloud.auth.signOut({ scope: "local" }); });
+document.getElementById("betaConsentForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const status = document.getElementById("betaConsentStatus");
+  status.textContent = "Saving your choice…";
+  state.profile.betaTermsAcceptedAt = new Date().toISOString();
+  state.profile.privacyNoticeVersion = PRIVACY_NOTICE_VERSION;
+  try {
+    await saveState();
+    if (cloud && session) {
+      const verification = await cloud.from("career_profiles")
+        .select("beta_terms_accepted_at,privacy_notice_version")
+        .eq("user_id", session.user.id)
+        .single();
+      if (
+        verification.error ||
+        !verification.data.beta_terms_accepted_at ||
+        verification.data.privacy_notice_version !== PRIVACY_NOTICE_VERSION
+      ) {
+        throw verification.error || new Error("Consent could not be verified");
+      }
+    }
+    closeModal("betaConsentModal");
+    status.textContent = "";
+    toast("Private beta terms accepted");
+  } catch (error) {
+    state.profile.betaTermsAcceptedAt = "";
+    state.profile.privacyNoticeVersion = "";
+    status.textContent = error.message || "Your choice could not be saved.";
+  }
+});
 document.getElementById("onboardingBackButton").addEventListener("click", function() { setOnboardingStep(onboardingStep - 1); });
 document.getElementById("onboardingNextButton").addEventListener("click", function() {
   if (onboardingStep === 1) {
@@ -702,7 +881,9 @@ document.getElementById("onboardingForm").addEventListener("submit", async funct
       careerGoal: document.getElementById("onboardingGoal").value.trim(),
       experienceLevel: document.getElementById("onboardingExperience").value,
       country: "",
-      onboardingComplete: true
+      onboardingComplete: true,
+      betaTermsAcceptedAt: new Date().toISOString(),
+      privacyNoticeVersion: PRIVACY_NOTICE_VERSION
     };
     state.cv = {
       fileName: file ? file.name : "",
@@ -718,7 +899,7 @@ document.getElementById("onboardingForm").addEventListener("submit", async funct
     }];
     state.activePathId = pathId;
     if (file) {
-      const upload = await cloud.storage.from("private-cvs").upload(session.user.id + "/" + file.name, file, { upsert: true, contentType: "application/pdf" });
+      const upload = await cloud.storage.from("private-cvs").upload(session.user.id + "/current-cv.pdf", file, { upsert: true, contentType: "application/pdf" });
       if (upload.error) throw upload.error;
     }
     await cloud.auth.updateUser({ data: { display_name: state.profile.displayName } });
@@ -731,13 +912,17 @@ document.getElementById("onboardingForm").addEventListener("submit", async funct
 });
 ["upgradeButton", "membershipActionButton"].forEach(function(id) {
   document.getElementById(id).addEventListener("click", async function() {
+    if (!billingEnabled) {
+      toast("Premium billing is disabled during the private beta");
+      return;
+    }
     if (config.localPreview) {
       toast("Premium checkout becomes available when Stripe and Supabase are connected");
       return;
     }
     this.disabled = true;
     try { await openBilling(); }
-    catch (error) { toast(error.message || "Billing is temporarily unavailable"); this.disabled = false; }
+    catch (error) { toast(await functionErrorMessage(error, "Billing is temporarily unavailable")); this.disabled = false; }
   });
 });
 document.addEventListener("visibilitychange", function() {
@@ -748,13 +933,19 @@ document.addEventListener("visibilitychange", function() {
 
 document.getElementById("analyzeButton").addEventListener("click", async function() {
   if (!cloud || !session) { toast("Sign in to run private RAG analysis"); return; }
+  if (betaMode && !hasCurrentBetaConsent()) { openModal("betaConsentModal"); return; }
+  const path = activePath();
+  if (!path || !path.jobs.length) { toast("Add at least one job description before analysis"); return; }
+  if (!state.cv.text && !state.knowledge.length) { toast("Add CV text or knowledge evidence before analysis"); return; }
   const button = this;
+  const requestId = pendingAnalysisRequests[path.id] || crypto.randomUUID();
+  pendingAnalysisRequests[path.id] = requestId;
   button.disabled = true;
   button.textContent = "Analyzing…";
   try {
     await saveQueue;
     const result = await cloud.functions.invoke("analyze-career", {
-      body: { pathId: state.activePathId, targetRole: activePath() && activePath().target, documents: ragDocuments() }
+      body: { requestId: requestId, pathId: path.id, targetRole: path.target, documents: ragDocuments() }
     });
     if (result.error) throw result.error;
     if (result.data.access) {
@@ -763,18 +954,29 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
       accountAccess.plan = result.data.access.plan_code;
       renderAccount();
     }
-    const box = document.getElementById("ragResult");
-    box.innerHTML = '<div class="empty-state"><strong>Private RAG analysis</strong><p>' + safe(result.data.summary) + '</p>' +
-      (result.data.findings || []).map(function(item) { return '<p><strong>' + safe(item.skill) + ' · ' + safe(item.confidence) + '</strong> ' + safe(item.explanation) + ' <span class="skill-badge warn">' + safe((item.citations || []).join(", ")) + '</span></p>'; }).join("") + '</div>';
-  } catch (error) { toast(error.message || "Analysis failed"); }
-  finally { button.disabled = false; button.textContent = "Run RAG analysis"; }
+    const analysis = normalizeAnalysisRecord(result.data.analysis || {
+      requestId: requestId,
+      pathId: path.id,
+      status: "succeeded",
+      summary: result.data.summary,
+      findings: result.data.findings,
+      sources: result.data.sources || [],
+      completedAt: new Date().toISOString()
+    });
+    state.analyses = (state.analyses || []).filter(function(item) { return item.id !== analysis.id && item.requestId !== analysis.requestId; });
+    state.analyses.unshift(analysis);
+    delete pendingAnalysisRequests[path.id];
+    renderAnalysisResult(path);
+    toast(result.data.replayed ? "Saved analysis restored" : "Cited analysis saved privately");
+  } catch (error) { toast(await functionErrorMessage(error, "Analysis failed")); }
+  finally { button.disabled = false; button.textContent = "Run cited analysis"; }
 });
 
 document.getElementById("pathForm").addEventListener("submit", function(event) {
   event.preventDefault();
   const id = document.getElementById("pathId").value || crypto.randomUUID();
   const existing = state.paths.find(function(path) { return path.id === id; });
-  if (!existing && !canAdd("job_paths", state.paths.length)) { toast("Your current plan includes one job path. Upgrade for more."); return; }
+  if (!existing && !canAdd("job_paths", state.paths.length)) { toast("Your private-beta job path limit has been reached."); return; }
   const record = { id: id, name: document.getElementById("pathName").value.trim(), target: document.getElementById("pathTarget").value.trim(), description: document.getElementById("pathDescription").value.trim(), jobs: existing ? existing.jobs : [] };
   if (existing) Object.assign(existing, record); else state.paths.unshift(record);
   state.activePathId = id; saveState(); closeModal("pathModal"); setView("paths"); toast("Job path saved");
@@ -787,7 +989,7 @@ document.getElementById("jobForm").addEventListener("submit", function(event) {
   const id = document.getElementById("jobId").value || crypto.randomUUID();
   const existing = path.jobs.find(function(job) { return job.id === id; });
   const jobCount = state.paths.reduce(function(total, item) { return total + item.jobs.length; }, 0);
-  if (!existing && !canAdd("job_descriptions", jobCount)) { toast("Your job-description limit has been reached. Upgrade for more."); return; }
+  if (!existing && !canAdd("job_descriptions", jobCount)) { toast("Your private-beta job-description limit has been reached."); return; }
   const record = { id: id, title: document.getElementById("jobTitle").value.trim(), company: document.getElementById("jobCompany").value.trim(), location: document.getElementById("jobLocation").value.trim(), source: document.getElementById("jobSource").value.trim(), description: document.getElementById("jobDescription").value.trim(), createdAt: new Date().toISOString() };
   if (existing) Object.assign(existing, record); else path.jobs.unshift(record);
   saveState(); closeModal("jobModal"); render(); toast("Job description added to this path");
@@ -797,7 +999,7 @@ document.getElementById("knowledgeForm").addEventListener("submit", function(eve
   event.preventDefault();
   const id = document.getElementById("knowledgeId").value || crypto.randomUUID();
   const existing = state.knowledge.find(function(item) { return item.id === id; });
-  if (!existing && !canAdd("knowledge_evidence", state.knowledge.length)) { toast("Your evidence limit has been reached. Upgrade for more."); return; }
+  if (!existing && !canAdd("knowledge_evidence", state.knowledge.length)) { toast("Your private-beta evidence limit has been reached."); return; }
   const record = { id: id, skill: document.getElementById("knowledgeSkill").value.trim(), title: document.getElementById("knowledgeTitle").value.trim(), level: Number(document.getElementById("knowledgeLevel").value), evidence: document.getElementById("knowledgeEvidence").value.trim() };
   if (existing) Object.assign(existing, record); else state.knowledge.unshift(record);
   saveState(); closeModal("knowledgeModal"); render(); toast("Knowledge evidence saved");
@@ -811,7 +1013,7 @@ document.getElementById("cvFile").addEventListener("change", async function(even
   try {
     state.cv = { fileName: file.name, text: await extractPdf(file), uploadedAt: new Date().toISOString() };
     if (cloud && session) {
-      const upload = await cloud.storage.from("private-cvs").upload(session.user.id + "/" + file.name, file, { upsert: true, contentType: "application/pdf" });
+      const upload = await cloud.storage.from("private-cvs").upload(session.user.id + "/current-cv.pdf", file, { upsert: true, contentType: "application/pdf" });
       if (upload.error) throw upload.error;
     }
     saveState(); render(); toast("CV extracted and saved privately");
@@ -848,24 +1050,106 @@ document.getElementById("profileForm").addEventListener("submit", async function
   }
 });
 
-document.getElementById("clearWorkspaceButton").addEventListener("click", function() {
-  if (!window.confirm("Clear your CV, paths, jobs, and knowledge entries from Masari?")) return;
-  const profile = state.profile;
-  state = emptyState();
-  state.profile = profile;
-  saveState(); render(); toast("Workspace cleared");
+document.getElementById("feedbackButton").addEventListener("click", function() {
+  if (!session || config.feedbackEnabled === false) return;
+  document.getElementById("feedbackStatus").textContent = "";
+  openModal("feedbackModal");
 });
 
-document.getElementById("deleteAccountButton").addEventListener("click", async function() {
+document.getElementById("feedbackForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const status = document.getElementById("feedbackStatus");
+  const button = this.querySelector("[type=submit]");
+  status.classList.remove("is-success");
+  status.textContent = "Sending…";
+  button.disabled = true;
+  try {
+    const result = await cloud.from("beta_feedback").insert({
+      user_id: session.user.id,
+      category: document.getElementById("feedbackCategory").value,
+      message: document.getElementById("feedbackMessage").value.trim(),
+      context: {
+        view: activeView,
+        path_id: state.activePathId || null,
+        app_version: config.appVersion || "unknown"
+      }
+    });
+    if (result.error) throw result.error;
+    status.classList.add("is-success");
+    status.textContent = "Thank you—your feedback was saved privately.";
+    this.reset();
+    window.setTimeout(function() { closeModal("feedbackModal"); }, 900);
+  } catch (error) {
+    status.textContent = error.message || "Feedback could not be sent.";
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById("clearWorkspaceButton").addEventListener("click", async function() {
+  if (!window.confirm("Clear your CV, paths, jobs, and knowledge entries from Masari?")) return;
+  try {
+    if (cloud && session) {
+      const listing = await cloud.storage.from("private-cvs").list(session.user.id, { limit: 100 });
+      if (listing.error) throw listing.error;
+      const paths = (listing.data || []).map(function(file) { return session.user.id + "/" + file.name; });
+      if (paths.length) {
+        const removal = await cloud.storage.from("private-cvs").remove(paths);
+        if (removal.error) throw removal.error;
+      }
+      const analysisDeletion = await cloud.from("career_analyses").delete().eq("user_id", session.user.id);
+      if (analysisDeletion.error) throw analysisDeletion.error;
+      const chunkDeletion = await cloud.from("document_chunks").delete().eq("user_id", session.user.id);
+      if (chunkDeletion.error) throw chunkDeletion.error;
+    }
+    const profile = state.profile;
+    state = emptyState();
+    state.profile = profile;
+    await saveState();
+    render();
+    toast("Workspace and stored CV files cleared");
+  } catch (error) {
+    toast(error.message || "Workspace could not be cleared");
+  }
+});
+
+document.getElementById("deleteAccountButton").addEventListener("click", function() {
   if (!cloud || !session) { toast("Sign in before deleting an account"); return; }
-  if (!window.confirm("Permanently delete your account, CV files, job data, evidence, and analysis history? This cannot be undone.")) return;
-  const result = await cloud.functions.invoke("delete-account", { body: { confirmation: "DELETE" } });
-  if (result.error) { toast(result.error.message || "Account deletion failed"); return; }
-  localStorage.removeItem(cacheKey());
-  state = emptyState();
-  await cloud.auth.signOut({ scope: "local" });
-  render();
-  toast("Account and private data deleted");
+  document.getElementById("deleteAccountStatus").textContent = "";
+  openModal("deleteAccountModal");
+});
+
+document.getElementById("deleteAccountForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const status = document.getElementById("deleteAccountStatus");
+  const button = this.querySelector("[type=submit]");
+  const confirmation = document.getElementById("deleteConfirmation").value;
+  if (confirmation !== "DELETE") { status.textContent = "Type DELETE exactly."; return; }
+  button.disabled = true;
+  status.textContent = "Confirming your identity…";
+  try {
+    const reauthentication = await cloud.auth.signInWithPassword({
+      email: session.user.email,
+      password: document.getElementById("deletePassword").value
+    });
+    if (reauthentication.error) throw reauthentication.error;
+    session = reauthentication.data.session;
+    status.textContent = "Deleting your private data…";
+    const result = await cloud.functions.invoke("delete-account", { body: { confirmation: "DELETE" } });
+    if (result.error) throw result.error;
+    localStorage.removeItem(cacheKey());
+    state = emptyState();
+    closeModal("deleteAccountModal");
+    this.reset();
+    await cloud.auth.signOut({ scope: "local" });
+    render();
+    toast("Account and private data deleted");
+  } catch (error) {
+    status.textContent = await functionErrorMessage(error, "Account deletion failed");
+  } finally {
+    document.getElementById("deletePassword").value = "";
+    button.disabled = false;
+  }
 });
 
 async function initializeCloud() {
@@ -873,9 +1157,9 @@ async function initializeCloud() {
     if (config.localPreview) {
       state = loadState();
       accountAccess.features = {
-        job_paths: { enabled: true, quota: 1 },
-        job_descriptions: { enabled: true, quota: 5 },
-        knowledge_evidence: { enabled: true, quota: 10 }
+        job_paths: { enabled: true, quota: betaMode ? 3 : 1 },
+        job_descriptions: { enabled: true, quota: betaMode ? 20 : 5 },
+        knowledge_evidence: { enabled: true, quota: betaMode ? 50 : 10 }
       };
       showSurface("app");
       document.getElementById("saveState").textContent = "Local preview";
@@ -905,7 +1189,7 @@ async function initializeCloud() {
           if (authEvent === "PASSWORD_RECOVERY") openModal("resetPasswordModal");
         } else {
           state = emptyState();
-          accountAccess = { plan: "free", status: "free", rag_used: 0, rag_limit: 2, features: {} };
+          accountAccess = { plan: "free", status: "free", rag_used: 0, rag_limit: betaMode ? 10 : 2, features: {} };
           showSurface("auth");
         }
       } catch (error) {
@@ -924,7 +1208,7 @@ async function initializeCloud() {
   } else {
     showSurface("auth");
   }
-  const billingState = new URLSearchParams(window.location.search).get("billing");
+  const billingState = billingEnabled ? new URLSearchParams(window.location.search).get("billing") : null;
   if (billingState) {
     history.replaceState({}, "", window.location.pathname);
     if (billingState === "success") {

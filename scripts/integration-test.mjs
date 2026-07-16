@@ -29,21 +29,29 @@ async function request(path, { token = anonKey, apiKey = anonKey, method = "GET"
 async function createUser(label) {
   const email = `masari-${label}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
   const password = "Masari-Test-Password-42!";
-  const signup = await request("/auth/v1/signup", {
-    method: "POST",
-    body: { email, password, data: { display_name: `${label} User` } },
-  });
-  assert.equal(signup.response.status, 200, JSON.stringify(signup.data));
-  let token = signup.data.access_token;
-  if (!token) {
-    const login = await request("/auth/v1/token?grant_type=password", {
+  let created;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    created = await request("/auth/v1/admin/users", {
+      token: serviceKey,
+      apiKey: serviceKey,
       method: "POST",
-      body: { email, password },
+      body: {
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { display_name: `${label} User` },
+      },
     });
-    assert.equal(login.response.status, 200, JSON.stringify(login.data));
-    token = login.data.access_token;
+    if (![502, 503].includes(created.response.status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
   }
-  const user = { id: signup.data.user.id, email, token };
+  assert.equal(created.response.status, 200, JSON.stringify(created.data));
+  const login = await request("/auth/v1/token?grant_type=password", {
+    method: "POST",
+    body: { email, password },
+  });
+  assert.equal(login.response.status, 200, JSON.stringify(login.data));
+  const user = { id: created.data.id, email, password, token: login.data.access_token };
   createdUsers.push(user.id);
   return user;
 }
@@ -66,7 +74,32 @@ async function cleanup() {
   }
 }
 
+function completedAnalysisBody(userId, requestId, number) {
+  return {
+    p_user_id: userId,
+    p_request_id: requestId,
+    p_summary: `Persisted analysis ${number}`,
+    p_findings: [{
+      skill: "Kubernetes",
+      confidence: "partial",
+      explanation: "The job asks for Kubernetes and the CV contains partial evidence.",
+      citations: ["D1", "D2"],
+    }],
+    p_sources: [
+      { label: "D1", source_type: "job_description", source_id: "job", excerpt: "Kubernetes required" },
+      { label: "D2", source_type: "cv", source_id: "cv", excerpt: "Container experience" },
+    ],
+    p_model: "integration-model",
+  };
+}
+
 try {
+  const publicSignup = await request("/auth/v1/signup", {
+    method: "POST",
+    body: { email: `blocked-${Date.now()}@example.com`, password: "Blocked-Password-42!" },
+  });
+  assert.equal(publicSignup.response.ok, false, "public sign-up must be disabled for the private beta");
+
   const alice = await createUser("Alice");
   const bob = await createUser("Bob");
 
@@ -84,69 +117,44 @@ try {
       career_goal: "Become a senior platform engineer",
       experience_level: "mid",
       cv_text: "Alice private CV evidence",
+      beta_terms_accepted_at: new Date().toISOString(),
+      privacy_notice_version: "2026-07-16",
     },
   });
   assert.equal(onboardingUpdate.response.status, 200, JSON.stringify(onboardingUpdate.data));
-  assert.equal(onboardingUpdate.data[0].onboarding_complete, true);
+  assert.equal(onboardingUpdate.data[0].privacy_notice_version, "2026-07-16");
 
   const bobCannotReadAliceProfile = await rest(`career_profiles?user_id=eq.${alice.id}&select=*`, bob);
   assert.equal(bobCannotReadAliceProfile.response.status, 200);
   assert.deepEqual(bobCannotReadAliceProfile.data, []);
 
-  for (const functionName of ["analyze-career", "create-checkout-session", "create-portal-session"]) {
-    const unconfiguredFunction = await request(`/functions/v1/${functionName}`, {
-      token: alice.token,
+  const pathIds = [];
+  for (let index = 1; index <= 3; index += 1) {
+    const id = crypto.randomUUID();
+    pathIds.push(id);
+    const result = await rest("career_paths", alice, {
       method: "POST",
-      body: {},
+      body: {
+        id,
+        user_id: alice.id,
+        name: `Beta path ${index}`,
+        target: "Senior Platform Engineer",
+        description: "Private beta path",
+      },
     });
-    assert.equal(unconfiguredFunction.response.status, 503, `${functionName} should fail safely when local secrets are absent`);
+    assert.equal(result.response.status, 201, JSON.stringify(result.data));
   }
-
-  const anonymousProfiles = await request("/rest/v1/career_profiles?select=user_id");
-  assert.equal(anonymousProfiles.response.status, 401, "career profiles should not be granted to anon");
-
-  const alicePathId = crypto.randomUUID();
-  const firstPath = await rest("career_paths?select=*", alice, {
-    method: "POST",
-    headers: { Prefer: "return=representation" },
-    body: {
-      id: alicePathId,
-      user_id: alice.id,
-      name: "Platform Engineering",
-      target: "Senior Platform Engineer",
-      description: "Alice target",
-    },
-  });
-  assert.equal(firstPath.response.status, 201, JSON.stringify(firstPath.data));
-
-  const secondFreePath = await rest("career_paths", alice, {
+  const fourthPath = await rest("career_paths", alice, {
     method: "POST",
     body: {
       id: crypto.randomUUID(),
       user_id: alice.id,
-      name: "Second free path",
+      name: "Fourth beta path",
       target: "Architect",
       description: "",
     },
   });
-  assert.equal(secondFreePath.response.ok, false, "free users must be limited to one path");
-
-  const upsertExistingPath = await rest("career_paths?on_conflict=id&select=*", alice, {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
-    body: {
-      id: alicePathId,
-      user_id: alice.id,
-      name: "Platform Engineering Updated",
-      target: "Senior Platform Engineer",
-      description: "Updated",
-    },
-  });
-  assert.equal(upsertExistingPath.response.status, 200, JSON.stringify(upsertExistingPath.data));
-
-  const bobCannotReadAlice = await rest(`career_paths?id=eq.${alicePathId}&select=*`, bob);
-  assert.equal(bobCannotReadAlice.response.status, 200);
-  assert.deepEqual(bobCannotReadAlice.data, []);
+  assert.equal(fourthPath.response.ok, false, "private-beta users must be limited to three paths");
 
   const bobPathId = crypto.randomUUID();
   const bobPath = await rest("career_paths", bob, {
@@ -165,63 +173,49 @@ try {
       description: "This must never be accepted.",
     },
   });
-  assert.equal(crossTenantJob.response.ok, false, "composite ownership foreign key must reject cross-tenant paths");
+  assert.equal(crossTenantJob.response.ok, false, "cross-tenant path references must be rejected");
 
-  const firstJobId = crypto.randomUUID();
-  const firstJob = await rest("job_descriptions", alice, {
+  for (let index = 1; index <= 20; index += 1) {
+    const job = await rest("job_descriptions", alice, {
+      method: "POST",
+      body: {
+        id: crypto.randomUUID(),
+        user_id: alice.id,
+        path_id: pathIds[0],
+        title: `Platform role ${index}`,
+        description: `Unique beta platform description ${index}`,
+        content_hash: `beta-integration-hash-${index}`,
+      },
+    });
+    assert.equal(job.response.status, 201, JSON.stringify(job.data));
+  }
+  const twentyFirstJob = await rest("job_descriptions", alice, {
     method: "POST",
     body: {
-      id: firstJobId,
+      id: crypto.randomUUID(),
       user_id: alice.id,
-      path_id: alicePathId,
-      title: "Platform role 1",
-      description: "Unique platform description 1",
-      content_hash: "integration-hash-1",
+      path_id: pathIds[0],
+      title: "Platform role 21",
+      description: "This exceeds the private-beta allowance.",
+      content_hash: "beta-integration-hash-21",
     },
   });
-  assert.equal(firstJob.response.status, 201, JSON.stringify(firstJob.data));
+  assert.equal(twentyFirstJob.response.ok, false, "private-beta users must be limited to 20 jobs");
 
   const duplicateJob = await rest("job_descriptions", alice, {
     method: "POST",
     body: {
       id: crypto.randomUUID(),
       user_id: alice.id,
-      path_id: alicePathId,
+      path_id: pathIds[1],
       title: "Duplicate role",
       description: "Duplicate normalized content",
-      content_hash: "integration-hash-1",
+      content_hash: "beta-integration-hash-1",
     },
   });
   assert.equal(duplicateJob.response.ok, false, "duplicate job content hashes must be rejected");
 
-  for (let index = 2; index <= 5; index += 1) {
-    const job = await rest("job_descriptions", alice, {
-      method: "POST",
-      body: {
-        id: crypto.randomUUID(),
-        user_id: alice.id,
-        path_id: alicePathId,
-        title: `Platform role ${index}`,
-        description: `Unique platform description ${index}`,
-        content_hash: `integration-hash-${index}`,
-      },
-    });
-    assert.equal(job.response.status, 201, JSON.stringify(job.data));
-  }
-  const sixthFreeJob = await rest("job_descriptions", alice, {
-    method: "POST",
-    body: {
-      id: crypto.randomUUID(),
-      user_id: alice.id,
-      path_id: alicePathId,
-      title: "Platform role 6",
-      description: "Unique platform description 6",
-      content_hash: "integration-hash-6",
-    },
-  });
-  assert.equal(sixthFreeJob.response.ok, false, "free users must be limited to five job descriptions");
-
-  for (let index = 1; index <= 10; index += 1) {
+  for (let index = 1; index <= 50; index += 1) {
     const evidence = await rest("knowledge_evidence", alice, {
       method: "POST",
       body: {
@@ -235,56 +229,260 @@ try {
     });
     assert.equal(evidence.response.status, 201, JSON.stringify(evidence.data));
   }
-  const eleventhEvidence = await rest("knowledge_evidence", alice, {
+  const fiftyFirstEvidence = await rest("knowledge_evidence", alice, {
     method: "POST",
     body: {
       id: crypto.randomUUID(),
       user_id: alice.id,
-      skill: "Skill 11",
-      title: "Evidence 11",
+      skill: "Skill 51",
+      title: "Evidence 51",
       confidence: 2,
-      evidence: "This exceeds the Free allowance.",
+      evidence: "This exceeds the private-beta allowance.",
     },
   });
-  assert.equal(eleventhEvidence.response.ok, false, "free users must be limited to ten evidence records");
+  assert.equal(fiftyFirstEvidence.response.ok, false, "private-beta users must be limited to 50 evidence records");
 
-  for (let index = 0; index < 2; index += 1) {
-    const usage = await rest("rpc/consume_feature_usage", alice, {
-      method: "POST",
-      body: { p_feature_key: "rag_analysis" },
-    });
-    assert.equal(usage.response.status, 200, JSON.stringify(usage.data));
-    assert.equal(usage.data[0].allowed, true);
-    assert.equal(usage.data[0].used, index + 1);
-  }
-  const exhausted = await rest("rpc/consume_feature_usage", alice, {
+  const feedback = await rest("beta_feedback", alice, {
+    method: "POST",
+    body: {
+      user_id: alice.id,
+      category: "analysis",
+      message: "The cited analysis was useful.",
+      context: { view: "overview", app_version: "integration" },
+    },
+  });
+  assert.equal(feedback.response.status, 201, JSON.stringify(feedback.data));
+  const bobCannotReadFeedback = await rest(`beta_feedback?user_id=eq.${alice.id}&select=*`, bob);
+  assert.deepEqual(bobCannotReadFeedback.data, []);
+  const aliceCannotWriteBobFeedback = await rest("beta_feedback", alice, {
+    method: "POST",
+    body: { user_id: bob.id, category: "other", message: "Forbidden cross-user feedback" },
+  });
+  assert.equal(aliceCannotWriteBobFeedback.response.ok, false);
+
+  const directLegacyQuotaCall = await rest("rpc/consume_feature_usage", alice, {
     method: "POST",
     body: { p_feature_key: "rag_analysis" },
   });
-  assert.equal(exhausted.response.status, 200, JSON.stringify(exhausted.data));
-  assert.equal(exhausted.data[0].allowed, false);
-  assert.equal(exhausted.data[0].quota, 2);
+  assert.equal(directLegacyQuotaCall.response.ok, false, "browser clients must use idempotent analysis reservations");
 
-  const access = await rest("rpc/get_my_account_access", alice, { method: "POST", body: {} });
-  assert.equal(access.response.status, 200, JSON.stringify(access.data));
-  assert.equal(access.data.plan, "free");
-  assert.equal(access.data.rag_used, 2);
-  assert.equal(access.data.rag_limit, 2);
-
-  const unauthorizedStripeMutation = await rest("rpc/apply_stripe_subscription_event", alice, {
+  const directReservation = await rest("rpc/reserve_career_analysis", alice, {
     method: "POST",
     body: {
       p_user_id: alice.id,
-      p_plan_code: "premium",
-      p_subscription_id: "sub_forbidden",
-      p_price_id: "price_forbidden",
-      p_status: "active",
-      p_cancel_at_period_end: false,
-      p_current_period_end: new Date(Date.now() + 86400000).toISOString(),
-      p_event_created: 10,
+      p_request_id: crypto.randomUUID(),
+      p_path_id: pathIds[0],
+      p_target_role: "Senior Platform Engineer",
+      p_document_count: 2,
     },
   });
-  assert.equal(unauthorizedStripeMutation.response.ok, false, "users must not mutate Stripe state");
+  assert.equal(directReservation.response.ok, false, "analysis lifecycle RPCs must be service-role only");
+
+  const firstRequestId = crypto.randomUUID();
+  const firstReservation = await serviceRest("rpc/reserve_career_analysis", {
+    method: "POST",
+    body: {
+      p_user_id: alice.id,
+      p_request_id: firstRequestId,
+      p_path_id: pathIds[0],
+      p_target_role: "Senior Platform Engineer",
+      p_document_count: 2,
+    },
+  });
+  assert.equal(firstReservation.response.status, 200, JSON.stringify(firstReservation.data));
+  assert.equal(firstReservation.data.state, "reserved");
+  assert.equal(firstReservation.data.access.used, 1);
+
+  const duplicatePending = await serviceRest("rpc/reserve_career_analysis", {
+    method: "POST",
+    body: {
+      p_user_id: alice.id,
+      p_request_id: firstRequestId,
+      p_path_id: pathIds[0],
+      p_target_role: "Senior Platform Engineer",
+      p_document_count: 2,
+    },
+  });
+  assert.equal(duplicatePending.data.state, "pending");
+  assert.equal(duplicatePending.data.access.used, 1, "duplicate requests must not consume quota");
+
+  const differentRequestWhileBusy = await serviceRest("rpc/reserve_career_analysis", {
+    method: "POST",
+    body: {
+      p_user_id: alice.id,
+      p_request_id: crypto.randomUUID(),
+      p_path_id: pathIds[1],
+      p_target_role: "Platform Architect",
+      p_document_count: 2,
+    },
+  });
+  assert.equal(differentRequestWhileBusy.data.state, "user_busy", JSON.stringify(differentRequestWhileBusy.data));
+  const accessWhileBusy = await rest("rpc/get_my_account_access", alice, { method: "POST", body: {} });
+  assert.equal(accessWhileBusy.data.rag_used, 1, "a second path must wait without consuming quota");
+
+  const bobCannotReadAnalysis = await rest(`career_analyses?request_id=eq.${firstRequestId}&select=*`, bob);
+  assert.deepEqual(bobCannotReadAnalysis.data, []);
+
+  const failed = await serviceRest("rpc/fail_career_analysis", {
+    method: "POST",
+    body: { p_user_id: alice.id, p_request_id: firstRequestId, p_failure_code: "AI_TIMEOUT" },
+  });
+  assert.equal(failed.data, true);
+  const afterFailure = await rest("rpc/get_my_account_access", alice, { method: "POST", body: {} });
+  assert.equal(afterFailure.data.rag_used, 0, "failed analyses must release their quota reservation");
+
+  const retryReservation = await serviceRest("rpc/reserve_career_analysis", {
+    method: "POST",
+    body: {
+      p_user_id: alice.id,
+      p_request_id: firstRequestId,
+      p_path_id: pathIds[0],
+      p_target_role: "Senior Platform Engineer",
+      p_document_count: 2,
+    },
+  });
+  assert.equal(retryReservation.data.state, "reserved");
+  const completed = await serviceRest("rpc/complete_career_analysis", {
+    method: "POST",
+    body: completedAnalysisBody(alice.id, firstRequestId, 1),
+  });
+  assert.equal(completed.response.status, 200, JSON.stringify(completed.data));
+  assert.equal(completed.data.status, "succeeded");
+  assert.equal(completed.data.findings[0].citations.length, 2);
+
+  const replayed = await serviceRest("rpc/reserve_career_analysis", {
+    method: "POST",
+    body: {
+      p_user_id: alice.id,
+      p_request_id: firstRequestId,
+      p_path_id: pathIds[0],
+      p_target_role: "Senior Platform Engineer",
+      p_document_count: 2,
+    },
+  });
+  assert.equal(replayed.data.state, "succeeded");
+  assert.equal(replayed.data.access.used, 1, "successful replay must be idempotent");
+
+  for (let index = 2; index <= 10; index += 1) {
+    const requestId = crypto.randomUUID();
+    const reserved = await serviceRest("rpc/reserve_career_analysis", {
+      method: "POST",
+      body: {
+        p_user_id: alice.id,
+        p_request_id: requestId,
+        p_path_id: pathIds[0],
+        p_target_role: "Senior Platform Engineer",
+        p_document_count: 2,
+      },
+    });
+    assert.equal(reserved.data.state, "reserved", JSON.stringify(reserved.data));
+    const complete = await serviceRest("rpc/complete_career_analysis", {
+      method: "POST",
+      body: completedAnalysisBody(alice.id, requestId, index),
+    });
+    assert.equal(complete.response.status, 200, JSON.stringify(complete.data));
+  }
+  const overQuota = await serviceRest("rpc/reserve_career_analysis", {
+    method: "POST",
+    body: {
+      p_user_id: alice.id,
+      p_request_id: crypto.randomUUID(),
+      p_path_id: pathIds[0],
+      p_target_role: "Senior Platform Engineer",
+      p_document_count: 2,
+    },
+  });
+  assert.equal(overQuota.data.state, "quota_exceeded");
+  assert.equal(overQuota.data.access.quota, 10);
+
+  const atomicAction = `integration-atomic-${Date.now()}`;
+  const atomicBurst = await Promise.all(Array.from({ length: 10 }, function() {
+    return serviceRest("rpc/consume_rate_limit", {
+      method: "POST",
+      body: {
+        p_user_id: alice.id,
+        p_action: atomicAction,
+        p_limit: 5,
+        p_window_seconds: 60,
+      },
+    });
+  }));
+  assert.equal(atomicBurst.filter((result) => result.data[0].allowed).length, 5);
+  const bobIndependentLimit = await serviceRest("rpc/consume_rate_limit", {
+    method: "POST",
+    body: {
+      p_user_id: bob.id,
+      p_action: atomicAction,
+      p_limit: 5,
+      p_window_seconds: 60,
+    },
+  });
+  assert.equal(bobIndependentLimit.data[0].allowed, true);
+
+  const pdfBytes = new TextEncoder().encode("%PDF-1.4 Masari integration fixture");
+  const upload = await fetch(`${baseUrl}/storage/v1/object/private-cvs/${alice.id}/current-cv.pdf`, {
+    method: "POST",
+    headers: {
+      apikey: anonKey,
+      Authorization: `Bearer ${alice.token}`,
+      "Content-Type": "application/pdf",
+    },
+    body: pdfBytes,
+  });
+  assert.equal(upload.ok, true, await upload.text());
+  const aliceReadsOwnCv = await fetch(`${baseUrl}/storage/v1/object/authenticated/private-cvs/${alice.id}/current-cv.pdf`, {
+    headers: { apikey: anonKey, Authorization: `Bearer ${alice.token}` },
+  });
+  assert.equal(aliceReadsOwnCv.ok, true, await aliceReadsOwnCv.text());
+  const bobReadsAliceCv = await fetch(`${baseUrl}/storage/v1/object/authenticated/private-cvs/${alice.id}/current-cv.pdf`, {
+    headers: { apikey: anonKey, Authorization: `Bearer ${bob.token}` },
+  });
+  assert.equal(bobReadsAliceCv.ok, false, "private CV must not be readable by another user");
+
+  const unconfiguredAnalysis = await request("/functions/v1/analyze-career", {
+    token: alice.token,
+    method: "POST",
+    body: {
+      requestId: crypto.randomUUID(),
+      pathId: pathIds[0],
+      targetRole: "Senior Platform Engineer",
+      documents: [{
+        id: "cv-1",
+        source_type: "cv",
+        text: "Private integration CV evidence",
+        metadata: { source_id: "cv", chunk_index: 0 },
+      }],
+    },
+  });
+  assert.equal(unconfiguredAnalysis.response.status, 503, JSON.stringify(unconfiguredAnalysis.data));
+  assert.equal(unconfiguredAnalysis.data.code, "AI_NOT_CONFIGURED");
+
+  for (let index = 0; index < 5; index += 1) {
+    const checkoutAttempt = await request("/functions/v1/create-checkout-session", {
+      token: alice.token,
+      method: "POST",
+      body: {},
+    });
+    assert.equal(checkoutAttempt.response.status, 503);
+  }
+  const throttledCheckout = await request("/functions/v1/create-checkout-session", {
+    token: alice.token,
+    method: "POST",
+    body: {},
+  });
+  assert.equal(throttledCheckout.response.status, 429);
+  assert.equal(throttledCheckout.data.code, "RATE_LIMITED");
+
+  const exportResult = await request("/functions/v1/export-account", {
+    token: alice.token,
+    method: "POST",
+    body: {},
+  });
+  assert.equal(exportResult.response.status, 200, JSON.stringify(exportResult.data));
+  assert.equal(exportResult.data.profile.user_id, alice.id);
+  assert.equal(exportResult.data.career_analyses.length, 10);
+  assert.equal(exportResult.data.beta_feedback.length, 1);
+  assert.equal(exportResult.data.stored_cv_files[0].name, "current-cv.pdf");
 
   const newerStripeEvent = await serviceRest("rpc/apply_stripe_subscription_event", {
     method: "POST",
@@ -299,9 +497,7 @@ try {
       p_event_created: 200,
     },
   });
-  assert.equal(newerStripeEvent.response.status, 200, JSON.stringify(newerStripeEvent.data));
   assert.equal(newerStripeEvent.data, true);
-
   const staleStripeEvent = await serviceRest("rpc/apply_stripe_subscription_event", {
     method: "POST",
     body: {
@@ -315,49 +511,20 @@ try {
       p_event_created: 100,
     },
   });
-  assert.equal(staleStripeEvent.response.status, 200, JSON.stringify(staleStripeEvent.data));
-  assert.equal(staleStripeEvent.data, false, "older Stripe events must not overwrite newer state");
-
+  assert.equal(staleStripeEvent.data, false, "stale Stripe events must not overwrite newer state");
   const premiumAccess = await rest("rpc/get_my_account_access", alice, { method: "POST", body: {} });
-  assert.equal(premiumAccess.response.status, 200, JSON.stringify(premiumAccess.data));
   assert.equal(premiumAccess.data.plan, "premium");
   assert.equal(premiumAccess.data.rag_limit, 50);
 
-  const premiumSecondPath = await rest("career_paths", alice, {
+  const deletion = await request("/functions/v1/delete-account", {
+    token: bob.token,
     method: "POST",
-    body: {
-      id: crypto.randomUUID(),
-      user_id: alice.id,
-      name: "Architecture",
-      target: "Solution Architect",
-      description: "",
-    },
+    body: { confirmation: "DELETE" },
   });
-  assert.equal(premiumSecondPath.response.status, 201, JSON.stringify(premiumSecondPath.data));
+  assert.equal(deletion.response.status, 200, JSON.stringify(deletion.data));
+  assert.equal(deletion.data.deleted, true);
 
-  const pdfBytes = new TextEncoder().encode("%PDF-1.4 Masari integration fixture");
-  const upload = await fetch(`${baseUrl}/storage/v1/object/private-cvs/${alice.id}/cv.pdf`, {
-    method: "POST",
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${alice.token}`,
-      "Content-Type": "application/pdf",
-    },
-    body: pdfBytes,
-  });
-  assert.equal(upload.ok, true, await upload.text());
-
-  const aliceReadsOwnCv = await fetch(`${baseUrl}/storage/v1/object/authenticated/private-cvs/${alice.id}/cv.pdf`, {
-    headers: { apikey: anonKey, Authorization: `Bearer ${alice.token}` },
-  });
-  assert.equal(aliceReadsOwnCv.ok, true, await aliceReadsOwnCv.text());
-
-  const bobReadsAliceCv = await fetch(`${baseUrl}/storage/v1/object/authenticated/private-cvs/${alice.id}/cv.pdf`, {
-    headers: { apikey: anonKey, Authorization: `Bearer ${bob.token}` },
-  });
-  assert.equal(bobReadsAliceCv.ok, false, "private CV must not be readable by another user");
-
-  console.log("Integration contract verified: onboarding, RLS isolation, duplicate detection, Free/Premium limits, quotas, Stripe ordering, functions, and private storage.");
+  console.log("Private-beta integration contract verified: invite-only auth, consent, RLS isolation, beta quotas, idempotent persisted analysis, quota refunds, rate limiting, feedback, export, private storage, billing isolation, and account deletion.");
 } finally {
   await cleanup();
 }

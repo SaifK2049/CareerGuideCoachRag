@@ -1,36 +1,21 @@
 import Stripe from "npm:stripe@22.3.1";
 import { createClient } from "npm:@supabase/supabase-js@2.110.6";
-
-function cors(request: Request) {
-  const origin = request.headers.get("Origin") || "";
-  const allowed = (Deno.env.get("ALLOWED_ORIGINS") || Deno.env.get("APP_URL") || "")
-    .split(",").map((value) => value.trim()).filter(Boolean);
-  return {
-    "Access-Control-Allow-Origin": allowed.includes(origin) ? origin : allowed[0] || "",
-    "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
-    "Content-Type": "application/json",
-    "Vary": "Origin",
-  };
-}
+import { corsHeaders, handleCors, jsonResponse } from "../_shared/http.ts";
+import { consumeRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
 
 function response(request: Request, body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: cors(request) });
+  return jsonResponse(request, body, status);
 }
 
 Deno.serve(async (request) => {
-  if (request.method === "OPTIONS") return new Response("ok", { headers: cors(request) });
+  const corsResult = handleCors(request);
+  if (corsResult) return corsResult;
   if (request.method !== "POST") return response(request, { error: "Method not allowed" }, 405);
   try {
     const authorization = request.headers.get("Authorization");
     if (!authorization) return response(request, { error: "Authentication required" }, 401);
-    const appUrl = Deno.env.get("APP_URL");
-    const priceId = Deno.env.get("STRIPE_PREMIUM_PRICE_ID");
-    if (!appUrl || !priceId || !Deno.env.get("STRIPE_SECRET_KEY")) {
-      return response(request, { error: "Billing is not configured" }, 503);
-    }
-    const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY")!);
 
-    const userClient = createClient(
+    const userClient = createClient<any>(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
       { global: { headers: { Authorization: authorization } } },
@@ -39,12 +24,22 @@ Deno.serve(async (request) => {
     const { data: userData, error: userError } = await userClient.auth.getUser(token);
     if (userError || !userData.user) return response(request, { error: "Invalid session" }, 401);
 
-    const admin = createClient(
+    const admin = createClient<any>(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { autoRefreshToken: false, persistSession: false } },
     );
     const userId = userData.user.id;
+    const rateLimit = await consumeRateLimit(admin, userId, "create-checkout-session", 5, 600);
+    if (!rateLimit.allowed) return rateLimitResponse(rateLimit, corsHeaders(request));
+
+    const appUrl = Deno.env.get("APP_URL");
+    const priceId = Deno.env.get("STRIPE_PREMIUM_PRICE_ID");
+    if (!appUrl || !priceId || !Deno.env.get("STRIPE_SECRET_KEY")) {
+      return response(request, { error: "Billing is not configured" }, 503);
+    }
+    const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY")!);
+
     const { data: subscription } = await admin.from("account_subscriptions")
       .select("status").eq("user_id", userId).maybeSingle();
     if (subscription && ["active", "trialing"].includes(subscription.status)) {
@@ -90,8 +85,11 @@ Deno.serve(async (request) => {
       metadata: { supabase_user_id: userId, plan_code: "premium" },
     }, { idempotencyKey: `masari-checkout-${userId}-${Math.floor(Date.now() / 300000)}` });
     return response(request, { url: checkout.url });
-  } catch (error) {
-    console.error(error);
-    return response(request, { error: error instanceof Error ? error.message : "Checkout failed" }, 500);
+  } catch (_error) {
+    console.error("create-checkout-session failed");
+    return response(request, {
+      error: "Billing checkout is temporarily unavailable.",
+      code: "CHECKOUT_FAILED",
+    }, 500);
   }
 });
