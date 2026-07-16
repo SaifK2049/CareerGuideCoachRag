@@ -589,6 +589,10 @@ document.querySelectorAll(".modal-backdrop").forEach(function(backdrop) { backdr
 document.getElementById("editPathButton").addEventListener("click", function() { openPathModal(activePath()); });
 document.getElementById("exportButton").addEventListener("click", exportRag);
 document.getElementById("authButton").addEventListener("click", async function() {
+  if (config.localPreview) {
+    toast("Preview mode has no account session to sign out from");
+    return;
+  }
   if (cloud && session) await cloud.auth.signOut({ scope: "local" });
 });
 
@@ -727,6 +731,10 @@ document.getElementById("onboardingForm").addEventListener("submit", async funct
 });
 ["upgradeButton", "membershipActionButton"].forEach(function(id) {
   document.getElementById(id).addEventListener("click", async function() {
+    if (config.localPreview) {
+      toast("Premium checkout becomes available when Stripe and Supabase are connected");
+      return;
+    }
     this.disabled = true;
     try { await openBilling(); }
     catch (error) { toast(error.message || "Billing is temporarily unavailable"); this.disabled = false; }
@@ -871,10 +879,7 @@ async function initializeCloud() {
       };
       showSurface("app");
       document.getElementById("saveState").textContent = "Local preview";
-      document.getElementById("authButton").disabled = true;
       render();
-      document.getElementById("upgradeButton").disabled = true;
-      document.getElementById("membershipActionButton").disabled = true;
       return;
     }
     showSurface("auth");
