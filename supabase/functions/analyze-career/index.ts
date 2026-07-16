@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2.52.0";
+import { createClient } from "npm:@supabase/supabase-js@2.110.6";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -57,6 +57,18 @@ Deno.serve(async (request) => {
     }
     if (documents.some((item) => !item.id || !item.text || item.text.length > 12000)) {
       return json({ error: "A document chunk is invalid or too large" }, 400);
+    }
+    const { data: accessRows, error: accessError } = await client.rpc("consume_feature_usage", {
+      p_feature_key: "rag_analysis",
+    });
+    if (accessError) throw accessError;
+    const access = accessRows?.[0];
+    if (!access?.allowed) {
+      return json({
+        error: "Your monthly AI analysis allowance has been used",
+        code: "PLAN_LIMIT_REACHED",
+        access,
+      }, 402);
     }
 
     const embeddingResult = await openAi("embeddings", {
@@ -145,7 +157,7 @@ Deno.serve(async (request) => {
       entity_id: payload.pathId || null,
       details: { document_count: documents.length },
     });
-    return json(JSON.parse(outputText));
+    return json({ ...JSON.parse(outputText), access });
   } catch (error) {
     console.error(error);
     return json({ error: error instanceof Error ? error.message : "Analysis failed" }, 500);

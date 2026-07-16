@@ -3,3 +3,6 @@ config.js
 .env.*
 !.env.example
 .DS_Store
+dist/
+.wrangler/
+node_modules/

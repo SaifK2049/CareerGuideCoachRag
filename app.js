@@ -3,9 +3,43 @@ const config = window.CAREER_RAG_CONFIG || {};
 const cloud = config.supabaseUrl && config.supabasePublishableKey && window.supabase
   ? window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey)
   : null;
+if (config.termsUrl) document.getElementById("termsLink").href = config.termsUrl;
+if (config.privacyUrl) document.getElementById("privacyLink").href = config.privacyUrl;
 let session = null;
 let cloudReady = false;
 let saveQueue = Promise.resolve();
+let accountAccess = { plan: "free", status: "free", rag_used: 0, rag_limit: 2, features: {} };
+let onboardingStep = 1;
+const captchaTokens = { signin: "", signup: "" };
+const turnstileWidgets = { signin: null, signup: null };
+
+function ensureTurnstile(kind) {
+  if (!config.turnstileSiteKey || !window.turnstile || turnstileWidgets[kind] !== null) return;
+  const container = document.getElementById(kind + "Turnstile");
+  if (!container) return;
+  turnstileWidgets[kind] = window.turnstile.render(container, {
+    sitekey: config.turnstileSiteKey,
+    theme: "light",
+    callback: function(token) { captchaTokens[kind] = token; },
+    "expired-callback": function() { captchaTokens[kind] = ""; },
+    "error-callback": function() { captchaTokens[kind] = ""; }
+  });
+}
+
+function requireCaptcha(kind, message) {
+  if (!config.turnstileSiteKey || captchaTokens[kind]) return true;
+  ensureTurnstile(kind);
+  message.classList.remove("is-success");
+  message.textContent = "Complete the security check and try again.";
+  return false;
+}
+
+function resetTurnstile(kind) {
+  captchaTokens[kind] = "";
+  if (window.turnstile && turnstileWidgets[kind] !== null) window.turnstile.reset(turnstileWidgets[kind]);
+}
+
+window.onTurnstileLoad = function() { ensureTurnstile("signin"); };
 
 const SKILLS = {
   AWS: ["aws", "amazon web services"],
@@ -45,6 +79,7 @@ const CERTS = {
 };
 
 const demoState = {
+  profile: { displayName: "Demo user", careerGoal: "Explore Masari", experienceLevel: "mid", country: "", onboardingComplete: true },
   activePathId: "path-cloud",
   cv: { fileName: "", text: "", uploadedAt: "" },
   paths: [{
@@ -68,24 +103,36 @@ let state = loadState();
 let activeView = "overview";
 
 function loadState() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || structuredClone(demoState); }
+  if (!config.localPreview) return emptyState();
+  try { return JSON.parse(localStorage.getItem(cacheKey())) || structuredClone(demoState); }
   catch (error) { return structuredClone(demoState); }
 }
 
+function cacheKey() { return session ? STORAGE_KEY + ":" + session.user.id : STORAGE_KEY + ":preview"; }
+
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (config.localPreview) localStorage.setItem(cacheKey(), JSON.stringify(state));
   const label = document.getElementById("saveState");
   if (label) label.textContent = session ? "Saving…" : "Local preview";
   if (session && cloudReady) {
-    saveQueue = saveQueue.then(persistCloudState).catch(function(error) {
+    saveQueue = saveQueue.then(persistCloudState).catch(async function(error) {
       if (label) label.textContent = "Cloud save failed";
       toast(error.message || "Could not save to the cloud");
+      await loadCloudState();
+      render();
     });
   }
+  return saveQueue;
 }
 
 function emptyState() {
-  return { activePathId: "", cv: { fileName: "", text: "", uploadedAt: "" }, paths: [], knowledge: [] };
+  return {
+    profile: { displayName: "", careerGoal: "", experienceLevel: "", country: "", onboardingComplete: false },
+    activePathId: "",
+    cv: { fileName: "", text: "", uploadedAt: "" },
+    paths: [],
+    knowledge: []
+  };
 }
 
 async function loadCloudState() {
@@ -94,7 +141,8 @@ async function loadCloudState() {
     cloud.from("career_profiles").select("*").eq("user_id", userId).maybeSingle(),
     cloud.from("career_paths").select("*").eq("user_id", userId).order("created_at"),
     cloud.from("job_descriptions").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
-    cloud.from("knowledge_evidence").select("*").eq("user_id", userId).order("created_at", { ascending: false })
+    cloud.from("knowledge_evidence").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+    cloud.rpc("get_my_account_access")
   ]);
   results.forEach(function(result) { if (result.error) throw result.error; });
   const profile = results[0].data;
@@ -107,6 +155,13 @@ async function loadCloudState() {
     };
   });
   state = {
+    profile: {
+      displayName: profile && profile.display_name || session.user.user_metadata && session.user.user_metadata.display_name || "",
+      careerGoal: profile && profile.career_goal || "",
+      experienceLevel: profile && profile.experience_level || "",
+      country: profile && profile.country || "",
+      onboardingComplete: Boolean(profile && profile.onboarding_complete)
+    },
     activePathId: profile && profile.active_path_id || (paths[0] && paths[0].id) || "",
     cv: { fileName: profile && profile.cv_file_name || "", text: profile && profile.cv_text || "", uploadedAt: profile && profile.cv_uploaded_at || "" },
     paths: paths,
@@ -114,7 +169,7 @@ async function loadCloudState() {
       return { id: item.id, skill: item.skill, title: item.title, level: item.confidence, evidence: item.evidence };
     })
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  accountAccess = results[4].data || accountAccess;
 }
 
 async function deleteMissing(table, ids) {
@@ -124,12 +179,25 @@ async function deleteMissing(table, ids) {
   if (result.error) throw result.error;
 }
 
+async function contentHash(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+  return Array.from(new Uint8Array(bytes)).map(function(byte) { return byte.toString(16).padStart(2, "0"); }).join("");
+}
+
 async function persistCloudState() {
   const userId = session.user.id;
   const pathRows = state.paths.map(function(path) { return { id: path.id, user_id: userId, name: path.name, target: path.target, description: path.description || "", updated_at: new Date().toISOString() }; });
-  const jobRows = state.paths.flatMap(function(path) {
-    return path.jobs.map(function(job) { return { id: job.id, user_id: userId, path_id: path.id, title: job.title, company: job.company || "", location: job.location || "", source_url: job.source || "", description: job.description, updated_at: new Date().toISOString() }; });
-  });
+  const jobRows = await Promise.all(state.paths.flatMap(function(path) {
+    return path.jobs.map(async function(job) {
+      return {
+        id: job.id, user_id: userId, path_id: path.id, title: job.title,
+        company: job.company || "", location: job.location || "", source_url: job.source || "",
+        description: job.description, content_hash: await contentHash(job.description),
+        updated_at: new Date().toISOString()
+      };
+    });
+  }));
   const evidenceRows = state.knowledge.map(function(item) { return { id: item.id, user_id: userId, skill: item.skill, title: item.title, confidence: item.level, evidence: item.evidence, updated_at: new Date().toISOString() }; });
   for (const item of [[pathRows, "career_paths"], [jobRows, "job_descriptions"], [evidenceRows, "knowledge_evidence"]]) {
     if (item[0].length) {
@@ -139,7 +207,10 @@ async function persistCloudState() {
   }
   const profileResult = await cloud.from("career_profiles").upsert({
     user_id: userId, active_path_id: state.activePathId || null, cv_file_name: state.cv.fileName || "",
-    cv_text: state.cv.text || "", cv_uploaded_at: state.cv.uploadedAt || null, updated_at: new Date().toISOString()
+    cv_text: state.cv.text || "", cv_uploaded_at: state.cv.uploadedAt || null,
+    display_name: state.profile.displayName || "", career_goal: state.profile.careerGoal || "",
+    experience_level: state.profile.experienceLevel || "", country: state.profile.country || "",
+    onboarding_complete: Boolean(state.profile.onboardingComplete), updated_at: new Date().toISOString()
   });
   if (profileResult.error) throw profileResult.error;
   await deleteMissing("job_descriptions", jobRows.map(function(row) { return row.id; }));
@@ -150,6 +221,11 @@ async function persistCloudState() {
 
 function activePath() {
   return state.paths.find(function(path) { return path.id === state.activePathId; }) || state.paths[0];
+}
+
+function canAdd(featureKey, currentCount) {
+  const feature = accountAccess.features && accountAccess.features[featureKey];
+  return !feature || feature.quota === null || currentCount < Number(feature.quota);
 }
 
 function safe(value) {
@@ -227,7 +303,30 @@ function formatDate(value) {
   return value ? new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(value)) : "";
 }
 
+function renderAccount() {
+  const premium = accountAccess.plan === "premium";
+  const hasBilling = !["free", "canceled", "incomplete_expired"].includes(accountAccess.status || "free");
+  const name = state.profile.displayName || (session && session.user.email && session.user.email.split("@")[0]) || "there";
+  document.getElementById("welcomeLabel").textContent = "Welcome, " + name;
+  ["planBadge", "membershipBadge"].forEach(function(id) {
+    const badge = document.getElementById(id);
+    badge.textContent = premium ? "Premium" : "Free";
+    badge.classList.toggle("is-premium", premium);
+  });
+  document.getElementById("upgradeButton").classList.toggle("hidden", premium);
+  document.getElementById("membershipName").textContent = premium ? "Masari Premium" : "Masari Free";
+  document.getElementById("membershipDescription").textContent = premium
+    ? "Advanced career analysis and planning are active."
+    : "Build your baseline with limited monthly AI analysis.";
+  const used = Number(accountAccess.rag_used || 0);
+  const limit = Number(accountAccess.rag_limit || 0);
+  document.getElementById("analysisUsage").textContent = used + " / " + (limit || "—");
+  document.getElementById("analysisUsageBar").style.width = limit ? Math.min(100, Math.round(used / limit * 100)) + "%" : "0%";
+  document.getElementById("membershipActionButton").textContent = premium || hasBilling ? "Manage billing" : "Upgrade to Premium";
+}
+
 function render() {
+  renderAccount();
   const path = activePath();
   if (!path) {
     document.getElementById("activePathName").textContent = "Create a job path";
@@ -237,6 +336,16 @@ function render() {
     document.getElementById("jobsStat").textContent = "0";
     document.getElementById("knowledgeStat").textContent = state.knowledge.length;
     document.getElementById("documentsStat").textContent = ragDocuments().length;
+    document.getElementById("readinessScore").textContent = "0%";
+    document.getElementById("readinessBar").style.width = "0%";
+    document.getElementById("topGapStat").textContent = "Add data";
+    renderSkills([]);
+    renderFocus([]);
+    renderJobs(document.getElementById("recentJobs"), []);
+    document.getElementById("pathList").innerHTML = '<div class="empty-state">Create your first job path.</div>';
+    document.getElementById("pathJobs").innerHTML = '<div class="empty-state">No jobs yet.</div>';
+    renderKnowledge();
+    renderProfile();
     return;
   }
   const items = analysisFor(path);
@@ -320,6 +429,10 @@ function renderKnowledge() {
 }
 
 function renderProfile() {
+  document.getElementById("profileDisplayName").value = state.profile.displayName || "";
+  document.getElementById("profileCareerGoal").value = state.profile.careerGoal || "";
+  document.getElementById("profileExperience").value = state.profile.experienceLevel || "";
+  document.getElementById("profileCountry").value = state.profile.country || "";
   document.getElementById("cvText").value = state.cv.text || "";
   document.getElementById("cvStatus").textContent = state.cv.fileName || (state.cv.text ? "Pasted CV evidence" : "No CV uploaded");
   const details = document.getElementById("cvFileDetails");
@@ -400,6 +513,68 @@ function setView(view) {
   render();
 }
 
+function showSurface(surface) {
+  document.getElementById("authGate").classList.toggle("hidden", surface !== "auth");
+  document.getElementById("onboardingGate").classList.toggle("hidden", surface !== "onboarding");
+  document.getElementById("appShell").classList.toggle("hidden", surface !== "app");
+}
+
+function setOnboardingStep(step) {
+  onboardingStep = Math.max(1, Math.min(3, step));
+  document.querySelectorAll("[data-onboarding-step]").forEach(function(panel) {
+    panel.classList.toggle("hidden", Number(panel.dataset.onboardingStep) !== onboardingStep);
+  });
+  document.querySelectorAll("[data-step-dot]").forEach(function(dot) {
+    dot.classList.toggle("is-active", Number(dot.dataset.stepDot) <= onboardingStep);
+  });
+  document.getElementById("onboardingBackButton").classList.toggle("hidden", onboardingStep === 1);
+  document.getElementById("onboardingNextButton").classList.toggle("hidden", onboardingStep === 3);
+  document.getElementById("onboardingFinishButton").classList.toggle("hidden", onboardingStep !== 3);
+}
+
+function showSignedInSurface() {
+  if (!state.profile.onboardingComplete) {
+    document.getElementById("onboardingName").value = state.profile.displayName || "";
+    document.getElementById("onboardingGoal").value = state.profile.careerGoal || "";
+    document.getElementById("onboardingExperience").value = state.profile.experienceLevel || "";
+    setOnboardingStep(1);
+    showSurface("onboarding");
+  } else {
+    showSurface("app");
+    render();
+  }
+}
+
+async function refreshAccountAccess() {
+  const result = await cloud.rpc("get_my_account_access");
+  if (result.error) throw result.error;
+  accountAccess = result.data || accountAccess;
+  renderAccount();
+}
+
+async function confirmBillingActivation(attempt) {
+  try {
+    await refreshAccountAccess();
+    if (accountAccess.plan === "premium") { toast("Masari Premium is now active"); return; }
+  } catch (_error) {}
+  if (attempt < 5) {
+    window.setTimeout(function() { confirmBillingActivation(attempt + 1); }, 1500 * (attempt + 1));
+  } else {
+    toast("Payment received. Refresh shortly if Premium is not visible yet.");
+  }
+}
+
+async function openBilling() {
+  if (!session) return;
+  const hasBilling = !["free", "canceled", "incomplete_expired"].includes(accountAccess.status || "free");
+  const functionName = accountAccess.plan === "premium" || hasBilling ? "create-portal-session" : "create-checkout-session";
+  const result = await cloud.functions.invoke(functionName, { body: {} });
+  if (result.error || !result.data || !result.data.url) {
+    throw result.error || new Error("Billing did not return a secure redirect");
+  }
+  window.location.assign(result.data.url);
+}
+
 document.querySelectorAll("[data-view]").forEach(function(button) { button.addEventListener("click", function() { setView(button.dataset.view); }); });
 document.querySelectorAll("[data-view-target]").forEach(function(button) { button.addEventListener("click", function() { setView(button.dataset.viewTarget); }); });
 document.querySelectorAll("[data-close-modal]").forEach(function(button) { button.addEventListener("click", function() { closeModal(button.dataset.closeModal); }); });
@@ -414,27 +589,153 @@ document.querySelectorAll(".modal-backdrop").forEach(function(backdrop) { backdr
 document.getElementById("editPathButton").addEventListener("click", function() { openPathModal(activePath()); });
 document.getElementById("exportButton").addEventListener("click", exportRag);
 document.getElementById("authButton").addEventListener("click", async function() {
-  if (!cloud) { toast("Copy config.example.js to config.js and add your Supabase project settings"); return; }
-  if (session) { await cloud.auth.signOut(); return; }
-  openModal("authModal");
+  if (cloud && session) await cloud.auth.signOut({ scope: "local" });
 });
 
 document.getElementById("authForm").addEventListener("submit", async function(event) {
   event.preventDefault();
+  const message = document.getElementById("authMessage");
+  message.classList.remove("is-success");
+  if (!requireCaptcha("signin", message)) return;
+  message.textContent = "Signing in…";
   const result = await cloud.auth.signInWithPassword({
     email: document.getElementById("authEmail").value.trim(),
-    password: document.getElementById("authPassword").value
+    password: document.getElementById("authPassword").value,
+    options: { captchaToken: captchaTokens.signin }
   });
-  document.getElementById("authMessage").textContent = result.error ? result.error.message : "";
-  if (!result.error) closeModal("authModal");
+  resetTurnstile("signin");
+  message.textContent = result.error ? result.error.message : "";
 });
 
-document.getElementById("signUpButton").addEventListener("click", async function() {
+document.getElementById("signupForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const message = document.getElementById("signupMessage");
+  message.classList.remove("is-success");
+  if (!requireCaptcha("signup", message)) return;
+  message.textContent = "Creating your private workspace…";
   const result = await cloud.auth.signUp({
-    email: document.getElementById("authEmail").value.trim(),
-    password: document.getElementById("authPassword").value
+    email: document.getElementById("signupEmail").value.trim(),
+    password: document.getElementById("signupPassword").value,
+    options: {
+      data: { display_name: document.getElementById("signupName").value.trim() },
+      captchaToken: captchaTokens.signup
+    }
   });
-  document.getElementById("authMessage").textContent = result.error ? result.error.message : "Account created. Check your email if confirmation is enabled.";
+  resetTurnstile("signup");
+  if (result.error) { message.textContent = result.error.message; return; }
+  message.classList.add("is-success");
+  message.textContent = result.data.session ? "Account created." : "Account created. Check your email to confirm it, then sign in.";
+});
+
+document.getElementById("showSignupButton").addEventListener("click", function() {
+  document.getElementById("signInPanel").classList.add("hidden");
+  document.getElementById("signupPanel").classList.remove("hidden");
+  ensureTurnstile("signup");
+});
+document.getElementById("showSigninButton").addEventListener("click", function() {
+  document.getElementById("signupPanel").classList.add("hidden");
+  document.getElementById("signInPanel").classList.remove("hidden");
+  ensureTurnstile("signin");
+});
+document.getElementById("forgotPasswordButton").addEventListener("click", async function() {
+  const email = document.getElementById("authEmail").value.trim();
+  const message = document.getElementById("authMessage");
+  message.classList.remove("is-success");
+  if (!email) { message.textContent = "Enter your email address first."; return; }
+  if (!requireCaptcha("signin", message)) return;
+  const result = await cloud.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin,
+    captchaToken: captchaTokens.signin
+  });
+  resetTurnstile("signin");
+  message.classList.toggle("is-success", !result.error);
+  message.textContent = result.error ? result.error.message : "Password reset instructions have been sent.";
+});
+document.getElementById("resetPasswordForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const password = document.getElementById("newPassword").value;
+  const confirmation = document.getElementById("confirmPassword").value;
+  const message = document.getElementById("resetPasswordMessage");
+  if (password !== confirmation) { message.textContent = "The passwords do not match."; return; }
+  const result = await cloud.auth.updateUser({ password: password });
+  if (result.error) { message.textContent = result.error.message; return; }
+  closeModal("resetPasswordModal");
+  this.reset();
+  toast("Your password has been updated");
+});
+document.getElementById("onboardingSignoutButton").addEventListener("click", function() { cloud.auth.signOut({ scope: "local" }); });
+document.getElementById("onboardingBackButton").addEventListener("click", function() { setOnboardingStep(onboardingStep - 1); });
+document.getElementById("onboardingNextButton").addEventListener("click", function() {
+  if (onboardingStep === 1) {
+    const fields = ["onboardingName", "onboardingGoal", "onboardingExperience"].map(function(id) { return document.getElementById(id); });
+    if (!fields.every(function(field) { return field.reportValidity(); })) return;
+  }
+  setOnboardingStep(onboardingStep + 1);
+});
+document.getElementById("onboardingCvFile").addEventListener("change", async function(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) { document.getElementById("onboardingMessage").textContent = "CV files must be 10 MB or smaller."; return; }
+  const nextButton = document.getElementById("onboardingNextButton");
+  nextButton.disabled = true;
+  document.getElementById("onboardingCvLabel").textContent = "Extracting " + file.name + "…";
+  try {
+    document.getElementById("onboardingCvText").value = await extractPdf(file);
+    document.getElementById("onboardingCvLabel").textContent = file.name + " is ready";
+  } catch (error) { document.getElementById("onboardingMessage").textContent = error.message || "Could not extract this PDF."; }
+  finally { nextButton.disabled = false; }
+});
+document.getElementById("onboardingForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const message = document.getElementById("onboardingMessage");
+  message.textContent = "Creating your personal workspace…";
+  try {
+    const pathId = crypto.randomUUID();
+    const file = document.getElementById("onboardingCvFile").files[0];
+    const cvText = document.getElementById("onboardingCvText").value.trim();
+    state.profile = {
+      displayName: document.getElementById("onboardingName").value.trim(),
+      careerGoal: document.getElementById("onboardingGoal").value.trim(),
+      experienceLevel: document.getElementById("onboardingExperience").value,
+      country: "",
+      onboardingComplete: true
+    };
+    state.cv = {
+      fileName: file ? file.name : "",
+      text: cvText,
+      uploadedAt: cvText || file ? new Date().toISOString() : ""
+    };
+    state.paths = [{
+      id: pathId,
+      name: document.getElementById("onboardingPathName").value.trim(),
+      target: document.getElementById("onboardingTarget").value.trim(),
+      description: document.getElementById("onboardingPathDescription").value.trim(),
+      jobs: []
+    }];
+    state.activePathId = pathId;
+    if (file) {
+      const upload = await cloud.storage.from("private-cvs").upload(session.user.id + "/" + file.name, file, { upsert: true, contentType: "application/pdf" });
+      if (upload.error) throw upload.error;
+    }
+    await cloud.auth.updateUser({ data: { display_name: state.profile.displayName } });
+    saveState();
+    await saveQueue;
+    message.textContent = "";
+    showSurface("app");
+    render();
+  } catch (error) { message.textContent = error.message || "Setup could not be completed."; }
+});
+["upgradeButton", "membershipActionButton"].forEach(function(id) {
+  document.getElementById(id).addEventListener("click", async function() {
+    this.disabled = true;
+    try { await openBilling(); }
+    catch (error) { toast(error.message || "Billing is temporarily unavailable"); this.disabled = false; }
+  });
+});
+document.addEventListener("visibilitychange", function() {
+  if (document.visibilityState === "visible" && session && cloudReady) {
+    refreshAccountAccess().catch(function() {});
+  }
 });
 
 document.getElementById("analyzeButton").addEventListener("click", async function() {
@@ -448,6 +749,12 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
       body: { pathId: state.activePathId, targetRole: activePath() && activePath().target, documents: ragDocuments() }
     });
     if (result.error) throw result.error;
+    if (result.data.access) {
+      accountAccess.rag_used = result.data.access.used;
+      accountAccess.rag_limit = result.data.access.quota;
+      accountAccess.plan = result.data.access.plan_code;
+      renderAccount();
+    }
     const box = document.getElementById("ragResult");
     box.innerHTML = '<div class="empty-state"><strong>Private RAG analysis</strong><p>' + safe(result.data.summary) + '</p>' +
       (result.data.findings || []).map(function(item) { return '<p><strong>' + safe(item.skill) + ' · ' + safe(item.confidence) + '</strong> ' + safe(item.explanation) + ' <span class="skill-badge warn">' + safe((item.citations || []).join(", ")) + '</span></p>'; }).join("") + '</div>';
@@ -459,6 +766,7 @@ document.getElementById("pathForm").addEventListener("submit", function(event) {
   event.preventDefault();
   const id = document.getElementById("pathId").value || crypto.randomUUID();
   const existing = state.paths.find(function(path) { return path.id === id; });
+  if (!existing && !canAdd("job_paths", state.paths.length)) { toast("Your current plan includes one job path. Upgrade for more."); return; }
   const record = { id: id, name: document.getElementById("pathName").value.trim(), target: document.getElementById("pathTarget").value.trim(), description: document.getElementById("pathDescription").value.trim(), jobs: existing ? existing.jobs : [] };
   if (existing) Object.assign(existing, record); else state.paths.unshift(record);
   state.activePathId = id; saveState(); closeModal("pathModal"); setView("paths"); toast("Job path saved");
@@ -470,6 +778,8 @@ document.getElementById("jobForm").addEventListener("submit", function(event) {
   if (!path) { toast("Create a job path first"); closeModal("jobModal"); return; }
   const id = document.getElementById("jobId").value || crypto.randomUUID();
   const existing = path.jobs.find(function(job) { return job.id === id; });
+  const jobCount = state.paths.reduce(function(total, item) { return total + item.jobs.length; }, 0);
+  if (!existing && !canAdd("job_descriptions", jobCount)) { toast("Your job-description limit has been reached. Upgrade for more."); return; }
   const record = { id: id, title: document.getElementById("jobTitle").value.trim(), company: document.getElementById("jobCompany").value.trim(), location: document.getElementById("jobLocation").value.trim(), source: document.getElementById("jobSource").value.trim(), description: document.getElementById("jobDescription").value.trim(), createdAt: new Date().toISOString() };
   if (existing) Object.assign(existing, record); else path.jobs.unshift(record);
   saveState(); closeModal("jobModal"); render(); toast("Job description added to this path");
@@ -479,6 +789,7 @@ document.getElementById("knowledgeForm").addEventListener("submit", function(eve
   event.preventDefault();
   const id = document.getElementById("knowledgeId").value || crypto.randomUUID();
   const existing = state.knowledge.find(function(item) { return item.id === id; });
+  if (!existing && !canAdd("knowledge_evidence", state.knowledge.length)) { toast("Your evidence limit has been reached. Upgrade for more."); return; }
   const record = { id: id, skill: document.getElementById("knowledgeSkill").value.trim(), title: document.getElementById("knowledgeTitle").value.trim(), level: Number(document.getElementById("knowledgeLevel").value), evidence: document.getElementById("knowledgeEvidence").value.trim() };
   if (existing) Object.assign(existing, record); else state.knowledge.unshift(record);
   saveState(); closeModal("knowledgeModal"); render(); toast("Knowledge evidence saved");
@@ -487,6 +798,7 @@ document.getElementById("knowledgeForm").addEventListener("submit", function(eve
 document.getElementById("cvFile").addEventListener("change", async function(event) {
   const file = event.target.files && event.target.files[0];
   if (!file) return;
+  if (file.size > 10 * 1024 * 1024) { toast("CV files must be 10 MB or smaller"); event.target.value = ""; return; }
   document.getElementById("cvStatus").textContent = "Extracting PDF…";
   try {
     state.cv = { fileName: file.name, text: await extractPdf(file), uploadedAt: new Date().toISOString() };
@@ -494,7 +806,7 @@ document.getElementById("cvFile").addEventListener("change", async function(even
       const upload = await cloud.storage.from("private-cvs").upload(session.user.id + "/" + file.name, file, { upsert: true, contentType: "application/pdf" });
       if (upload.error) throw upload.error;
     }
-    saveState(); render(); toast("CV extracted and saved locally");
+    saveState(); render(); toast("CV extracted and saved privately");
   } catch (error) { document.getElementById("cvStatus").textContent = "Could not extract PDF"; toast(error.message || "PDF extraction failed"); }
 });
 
@@ -504,9 +816,35 @@ document.getElementById("saveCvButton").addEventListener("click", function() {
   saveState(); render(); document.getElementById("cvSaveMessage").textContent = "CV evidence saved"; toast("CV evidence saved");
 });
 
+document.getElementById("profileForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const message = document.getElementById("profileSaveMessage");
+  const displayName = document.getElementById("profileDisplayName").value.trim();
+  state.profile.displayName = displayName;
+  state.profile.careerGoal = document.getElementById("profileCareerGoal").value.trim();
+  state.profile.experienceLevel = document.getElementById("profileExperience").value;
+  state.profile.country = document.getElementById("profileCountry").value.trim();
+  message.textContent = "Saving…";
+  try {
+    if (cloud && session) {
+      const result = await cloud.auth.updateUser({ data: { display_name: displayName } });
+      if (result.error) throw result.error;
+    }
+    await saveState();
+    message.textContent = "Personal details saved";
+    renderAccount();
+    toast("Career profile updated");
+  } catch (error) {
+    message.textContent = "";
+    toast(error.message || "Personal details could not be saved");
+  }
+});
+
 document.getElementById("clearWorkspaceButton").addEventListener("click", function() {
-  if (!window.confirm("Clear the CV, paths, jobs, and knowledge entries from this browser?")) return;
+  if (!window.confirm("Clear your CV, paths, jobs, and knowledge entries from Masari?")) return;
+  const profile = state.profile;
   state = emptyState();
+  state.profile = profile;
   saveState(); render(); toast("Workspace cleared");
 });
 
@@ -515,7 +853,7 @@ document.getElementById("deleteAccountButton").addEventListener("click", async f
   if (!window.confirm("Permanently delete your account, CV files, job data, evidence, and analysis history? This cannot be undone.")) return;
   const result = await cloud.functions.invoke("delete-account", { body: { confirmation: "DELETE" } });
   if (result.error) { toast(result.error.message || "Account deletion failed"); return; }
-  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(cacheKey());
   state = emptyState();
   await cloud.auth.signOut({ scope: "local" });
   render();
@@ -524,40 +862,78 @@ document.getElementById("deleteAccountButton").addEventListener("click", async f
 
 async function initializeCloud() {
   if (!cloud) {
-    render();
-    document.getElementById("saveState").textContent = "Local preview";
+    if (config.localPreview) {
+      state = loadState();
+      accountAccess.features = {
+        job_paths: { enabled: true, quota: 1 },
+        job_descriptions: { enabled: true, quota: 5 },
+        knowledge_evidence: { enabled: true, quota: 10 }
+      };
+      showSurface("app");
+      document.getElementById("saveState").textContent = "Local preview";
+      document.getElementById("authButton").disabled = true;
+      render();
+      document.getElementById("upgradeButton").disabled = true;
+      document.getElementById("membershipActionButton").disabled = true;
+      return;
+    }
+    showSurface("auth");
+    const message = document.getElementById("authMessage");
+    message.textContent = "Masari is not configured yet. The administrator must add the Supabase project settings.";
+    document.querySelectorAll("#authGate input, #authGate button").forEach(function(element) { element.disabled = true; });
     return;
   }
-  const result = await cloud.auth.getSession();
-  session = result.data.session;
-  cloud.auth.onAuthStateChange(function(_event, nextSession) {
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(STORAGE_KEY + ":preview");
+  cloud.auth.onAuthStateChange(function(authEvent, nextSession) {
     window.setTimeout(async function() {
-      session = nextSession;
-      cloudReady = false;
-      if (session) {
-        await loadCloudState();
-        cloudReady = true;
-        document.getElementById("authButton").textContent = "Sign out";
-        document.querySelector(".storage-status span:last-child").textContent = "Encrypted cloud workspace";
-        document.getElementById("saveState").textContent = "Saved privately";
-      } else {
-        state = loadState();
-        document.getElementById("authButton").textContent = "Sign in";
-        document.getElementById("saveState").textContent = "Local preview";
+      try {
+        session = nextSession;
+        cloudReady = false;
+        if (session) {
+          localStorage.removeItem(cacheKey());
+          await loadCloudState();
+          cloudReady = true;
+          document.querySelector(".storage-status span:last-child").textContent = "Encrypted cloud workspace";
+          document.getElementById("saveState").textContent = "Saved privately";
+          showSignedInSurface();
+          if (authEvent === "PASSWORD_RECOVERY") openModal("resetPasswordModal");
+        } else {
+          state = emptyState();
+          accountAccess = { plan: "free", status: "free", rag_used: 0, rag_limit: 2, features: {} };
+          showSurface("auth");
+        }
+      } catch (error) {
+        showSurface("auth");
+        document.getElementById("authMessage").textContent = error.message || "Your workspace could not be loaded.";
       }
-      render();
     }, 0);
   });
+  const result = await cloud.auth.getSession();
+  session = result.data.session;
   if (session) {
     await loadCloudState();
     cloudReady = true;
-    document.getElementById("authButton").textContent = "Sign out";
     document.getElementById("saveState").textContent = "Saved privately";
+    showSignedInSurface();
+  } else {
+    showSurface("auth");
   }
-  render();
+  const billingState = new URLSearchParams(window.location.search).get("billing");
+  if (billingState) {
+    history.replaceState({}, "", window.location.pathname);
+    if (billingState === "success") {
+      toast("Payment received. Confirming Premium…");
+      window.setTimeout(function() { confirmBillingActivation(0); }, 1000);
+    } else if (billingState === "canceled") {
+      toast("Checkout canceled. Your plan was not changed.");
+    } else if (billingState === "return") {
+      window.setTimeout(function() { refreshAccountAccess().catch(function() {}); }, 1000);
+    }
+  }
 }
 
 initializeCloud().catch(function(error) {
-  render();
-  toast(error.message || "Cloud connection failed");
+  showSurface("auth");
+  document.getElementById("authMessage").textContent = error.message || "Masari could not connect. Please try again.";
 });

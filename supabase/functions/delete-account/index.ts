@@ -1,4 +1,5 @@
-import { createClient } from "npm:@supabase/supabase-js@2.52.0";
+import { createClient } from "npm:@supabase/supabase-js@2.110.6";
+import Stripe from "npm:stripe@22.3.1";
 
 const headers = {
   "Access-Control-Allow-Origin": "*",
@@ -23,6 +24,14 @@ Deno.serve(async (request) => {
     const { data, error: userError } = await admin.auth.getUser(token);
     if (userError || !data.user) return new Response('{"error":"Invalid session"}', { status: 401, headers });
 
+    const { data: billing } = await admin.from("billing_customers")
+      .select("stripe_customer_id").eq("user_id", data.user.id).maybeSingle();
+    if (billing?.stripe_customer_id) {
+      const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+      if (!stripeKey) return new Response('{"error":"Billing is not configured"}', { status: 503, headers });
+      const stripe = new Stripe(stripeKey);
+      await stripe.customers.del(billing.stripe_customer_id);
+    }
     await admin.storage.from("private-cvs").remove(
       (await admin.storage.from("private-cvs").list(data.user.id)).data?.map((file) => `${data.user.id}/${file.name}`) || [],
     );

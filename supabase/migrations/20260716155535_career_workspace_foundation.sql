@@ -84,6 +84,8 @@ create table public.audit_events (
 
 create index career_paths_user_id_idx on public.career_paths(user_id);
 create index job_descriptions_user_path_idx on public.job_descriptions(user_id, path_id);
+create index career_profiles_active_path_owner_idx on public.career_profiles(active_path_id, user_id);
+create index job_descriptions_path_owner_idx on public.job_descriptions(path_id, user_id);
 create index knowledge_evidence_user_id_idx on public.knowledge_evidence(user_id);
 create index document_chunks_user_source_idx on public.document_chunks(user_id, source_type, source_id);
 create index audit_events_user_created_idx on public.audit_events(user_id, created_at desc);
@@ -127,6 +129,10 @@ grant select, insert, update, delete on
   public.knowledge_evidence, public.document_chunks
   to authenticated;
 grant select, insert on public.audit_events to authenticated;
+grant select, insert, update, delete on
+  public.career_profiles, public.career_paths, public.job_descriptions,
+  public.knowledge_evidence, public.document_chunks, public.audit_events
+  to service_role;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('private-cvs', 'private-cvs', false, 10485760, array['application/pdf'])
@@ -162,13 +168,14 @@ set search_path = ''
 as $$
   select
     dc.id, dc.source_type, dc.source_id, dc.content, dc.metadata,
-    1 - (dc.embedding <=> query_embedding) as similarity
+    1 - (dc.embedding OPERATOR(extensions.<=>) query_embedding) as similarity
   from public.document_chunks dc
   where dc.user_id = (select auth.uid())
     and dc.embedding is not null
     and (filter_path is null or dc.metadata->>'path_id' = filter_path or dc.metadata->>'path_id' is null)
-  order by dc.embedding <=> query_embedding
+  order by dc.embedding OPERATOR(extensions.<=>) query_embedding
   limit least(greatest(match_count, 1), 30);
 $$;
 
-grant execute on function public.match_career_chunks(extensions.vector, integer, text) to authenticated;
+revoke all on function public.match_career_chunks(extensions.vector, integer, text) from public, anon;
+grant execute on function public.match_career_chunks(extensions.vector, integer, text) to authenticated, service_role;

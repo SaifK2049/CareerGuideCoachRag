@@ -1,0 +1,14 @@
+{
+  "name": "masari",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node --check app.js && node --check scripts/build.mjs && node scripts/verify-static.mjs",
+    "test:integration": "node scripts/integration-test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
