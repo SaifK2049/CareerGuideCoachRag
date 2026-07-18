@@ -21,6 +21,8 @@ const [
   webhookFunction,
   privacyNotice,
   betaTerms,
+  waitlistMigration,
+  waitlistFunction,
 ] = await Promise.all([
   readFile(resolve(root, "index.html"), "utf8"),
   readFile(resolve(root, "app.js"), "utf8"),
@@ -40,6 +42,8 @@ const [
   readFile(resolve(root, "supabase/functions/stripe-webhook/index.ts"), "utf8"),
   readFile(resolve(root, "privacy.html"), "utf8"),
   readFile(resolve(root, "beta-terms.html"), "utf8"),
+  readFile(resolve(root, "supabase/migrations/20260718223523_public_waitlist.sql"), "utf8"),
+  readFile(resolve(root, "supabase/functions/join-waitlist/index.ts"), "utf8"),
 ]);
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
@@ -50,7 +54,7 @@ const referenced = [...app.matchAll(/getElementById\("([^"]+)"\)/g)].map((match)
 const missing = [...new Set(referenced.filter((id) => !ids.includes(id)))];
 if (missing.length) throw new Error(`JavaScript references missing HTML ids: ${missing.join(", ")}`);
 
-for (const required of ["authGate", "onboardingGate", "appShell", "membershipActionButton", "profileForm", "signinTurnstile", "signupTurnstile", "feedbackForm", "deleteAccountForm", "betaConsentForm"]) {
+for (const required of ["authGate", "onboardingGate", "appShell", "membershipActionButton", "profileForm", "signinTurnstile", "signupTurnstile", "signupForm", "feedbackForm", "deleteAccountForm", "betaConsentForm"]) {
   if (!ids.includes(required)) throw new Error(`Required production surface is missing: ${required}`);
 }
 if (!ids.includes("analysisStatus") || !app.includes("data-finding-feedback") || !app.includes("data-add-finding-evidence")) {
@@ -141,6 +145,17 @@ if (!/enable_signup = false/.test(supabaseConfig)) {
 if (!app.includes("billingEnabled") || !app.includes("signupEnabled") || !app.includes("betaMode")) {
   throw new Error("Private-beta feature flags are missing from the browser application");
 }
+if (!app.includes('cloud.functions.invoke("join-waitlist"') || !html.includes("Join the Masari waitlist")) {
+  throw new Error("Public waitlist signup flow is missing");
+}
+if (
+  !waitlistMigration.includes("alter table public.waitlist_signups enable row level security") ||
+  !waitlistMigration.includes("revoke all on table public.waitlist_signups from anon, authenticated") ||
+  !waitlistFunction.includes("challenges.cloudflare.com/turnstile/v0/siteverify") ||
+  !waitlistFunction.includes('Deno.env.get("TURNSTILE_SECRET_KEY")')
+) {
+  throw new Error("Waitlist storage must remain private and Turnstile-verified");
+}
 if (!app.includes('cloud.functions.invoke("export-account"') || !app.includes('cloud.from("beta_feedback").insert')) {
   throw new Error("Account export or private-beta feedback is not connected");
 }
@@ -169,8 +184,8 @@ if (!analysisFunction.includes('"analysis_started"') || !analysisFunction.includ
 if (!/await saveState\(\);[\s\S]*?cloud\.auth\.updateUser\(\{ data: \{ display_name: state\.profile\.displayName \} \}\)/.test(app)) {
   throw new Error("Onboarding must persist the workspace before updating auth metadata");
 }
-if (!app.includes("captchaToken: captchaTokens.signin") || !app.includes("captchaToken: captchaTokens.signup")) {
-  throw new Error("Sign-in, password recovery and sign-up must pass Cloudflare Turnstile tokens to Supabase");
+if (!app.includes("captchaToken: captchaTokens.signin") || !app.includes("turnstileToken: captchaTokens.signup")) {
+  throw new Error("Sign-in, password recovery and waitlist signup must pass Cloudflare Turnstile tokens");
 }
 if (!html.includes("https://challenges.cloudflare.com/turnstile/") || !headers.includes("frame-src https://challenges.cloudflare.com")) {
   throw new Error("Cloudflare Turnstile script or CSP permissions are missing");

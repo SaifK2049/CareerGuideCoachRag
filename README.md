@@ -42,6 +42,7 @@ Production mode requires Supabase configuration and starts at the authentication
    ```bash
    npx supabase secrets set OPENAI_API_KEY=YOUR_KEY
    npx supabase secrets set OPENAI_MODEL=gpt-5-mini
+   npx supabase secrets set TURNSTILE_SECRET_KEY=YOUR_PRIVATE_TURNSTILE_SECRET
    npx supabase secrets set APP_URL=https://app.example.com
    npx supabase secrets set ALLOWED_ORIGINS=https://app.example.com
    npx supabase functions deploy analyze-career

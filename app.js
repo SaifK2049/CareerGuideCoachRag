@@ -8,12 +8,13 @@ const cloud = config.supabaseUrl && config.supabasePublishableKey && window.supa
   ? window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey)
   : null;
 ["termsLink", "appTermsLink"].forEach(function(id) {
-  if (config.termsUrl) document.getElementById(id).href = config.termsUrl;
+  const link = document.getElementById(id);
+  if (config.termsUrl && link) link.href = config.termsUrl;
 });
 ["privacyLink", "appPrivacyLink"].forEach(function(id) {
-  if (config.privacyUrl) document.getElementById(id).href = config.privacyUrl;
+  const link = document.getElementById(id);
+  if (config.privacyUrl && link) link.href = config.privacyUrl;
 });
-document.getElementById("signupPrompt").classList.toggle("hidden", !signupEnabled);
 document.getElementById("feedbackButton").classList.toggle("hidden", config.feedbackEnabled === false);
 let session = null;
 let cloudReady = false;
@@ -955,32 +956,27 @@ document.getElementById("authForm").addEventListener("submit", async function(ev
 document.getElementById("signupForm").addEventListener("submit", async function(event) {
   event.preventDefault();
   const message = document.getElementById("signupMessage");
-  if (!signupEnabled) {
-    message.textContent = "Masari is currently invite-only. Ask the beta owner for an invitation.";
-    return;
-  }
   message.classList.remove("is-success");
   if (!requireCaptcha("signup", message)) return;
-  message.textContent = "Creating your private workspace…";
-  const result = await cloud.auth.signUp({
-    email: document.getElementById("signupEmail").value.trim(),
-    password: document.getElementById("signupPassword").value,
-    options: {
-      data: { display_name: document.getElementById("signupName").value.trim() },
-      captchaToken: captchaTokens.signup
+  message.textContent = "Joining the waitlist…";
+  const result = await cloud.functions.invoke("join-waitlist", {
+    body: {
+      email: document.getElementById("signupEmail").value.trim(),
+      displayName: document.getElementById("signupName").value.trim(),
+      turnstileToken: captchaTokens.signup
     }
   });
   resetTurnstile("signup");
-  if (result.error) { message.textContent = result.error.message; return; }
+  if (result.error || !result.data || !result.data.joined) {
+    message.textContent = result.data && result.data.error || "We could not join the waitlist right now. Please try again.";
+    return;
+  }
   message.classList.add("is-success");
-  message.textContent = result.data.session ? "Account created." : "Account created. Check your email to confirm it, then sign in.";
+  message.textContent = result.data.alreadyJoined ? "You are already on the Masari waitlist." : "You are on the list. We will contact you when access opens.";
+  this.reset();
 });
 
 document.getElementById("showSignupButton").addEventListener("click", function() {
-  if (!signupEnabled) {
-    document.getElementById("authMessage").textContent = "Masari is currently invite-only.";
-    return;
-  }
   document.getElementById("signInPanel").classList.add("hidden");
   document.getElementById("signupPanel").classList.remove("hidden");
   ensureTurnstile("signup");

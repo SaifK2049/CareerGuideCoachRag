@@ -34,22 +34,20 @@
             <button type="button" class="text-button auth-link" id="forgotPasswordButton">Forgot password?</button>
           </form>
           <p id="authMessage" class="auth-message" role="status"></p>
-          <div class="auth-switch" id="signupPrompt">New to Masari? <button type="button" class="text-button" id="showSignupButton">Create an account</button></div>
+          <div class="auth-switch" id="signupPrompt">New to Masari? <button type="button" class="text-button" id="showSignupButton">Join the waitlist</button></div>
         </div>
         <div class="auth-card hidden" id="signupPanel">
-          <p class="eyebrow">Create your workspace</p>
-          <h2>Join Masari</h2>
-          <p class="muted-copy">Create your invited private-beta workspace.</p>
+          <p class="eyebrow">Early access</p>
+          <h2>Join the Masari waitlist</h2>
+          <p class="muted-copy">Be first to hear when new private workspaces become available. We will only use these details for Masari access updates.</p>
           <form id="signupForm">
             <label class="field-label" for="signupName">Name</label>
             <input class="input" id="signupName" autocomplete="name" maxlength="120" required />
             <label class="field-label" for="signupEmail">Email</label>
             <input class="input" id="signupEmail" type="email" autocomplete="email" required />
-            <label class="field-label" for="signupPassword">Password</label>
-            <input class="input" id="signupPassword" type="password" minlength="10" autocomplete="new-password" required />
-            <label class="consent-row"><input id="termsConsent" type="checkbox" required /><span>I agree to the <a id="termsLink" href="#" target="_blank" rel="noreferrer">Terms</a> and <a id="privacyLink" href="#" target="_blank" rel="noreferrer">Privacy Policy</a>.</span></label>
+            <label class="consent-row"><input id="termsConsent" type="checkbox" required /><span>I agree that Masari may contact me about early access, as described in the <a id="privacyLink" href="#" target="_blank" rel="noreferrer">Privacy Policy</a>.</span></label>
             <div class="turnstile-slot" id="signupTurnstile" aria-label="Security check"></div>
-            <button type="submit" class="button button-dark button-full">Create account</button>
+            <button type="submit" class="button button-dark button-full">Join the waitlist</button>
           </form>
           <p id="signupMessage" class="auth-message" role="status"></p>
           <div class="auth-switch">Already have an account? <button type="button" class="text-button" id="showSigninButton">Sign in</button></div>
