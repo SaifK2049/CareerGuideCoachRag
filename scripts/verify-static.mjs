@@ -56,6 +56,12 @@ for (const required of ["authGate", "onboardingGate", "appShell", "membershipAct
 if (!ids.includes("analysisStatus") || !app.includes("data-finding-feedback") || !app.includes("data-add-finding-evidence")) {
   throw new Error("Interactive analysis status or finding feedback controls are missing");
 }
+for (const surface of ["setupChecklist", "nextActionPanel", "readinessExplainer", "latestAnalysisStat"]) {
+  if (!ids.includes(surface)) throw new Error(`Guided dashboard surface is missing: ${surface}`);
+}
+if (!app.includes("renderSetupChecklist") || !app.includes("data-empty-action")) {
+  throw new Error("Guided checklist or actionable empty states are missing");
+}
 for (const header of ["Content-Security-Policy", "Strict-Transport-Security", "X-Frame-Options"]) {
   if (!headers.includes(header)) throw new Error(`Required Cloudflare header is missing: ${header}`);
 }

@@ -112,18 +112,30 @@
         <div id="toast" class="toast" role="status"></div>
 
         <section class="view is-visible" id="overviewView">
+          <section class="setup-checklist panel" id="setupChecklist" aria-labelledby="setupChecklistTitle">
+            <div class="setup-checklist-head">
+              <div><p class="eyebrow">Getting started</p><h2 id="setupChecklistTitle">Build your first career baseline</h2><p id="setupChecklistSummary">Complete these steps to unlock a cited assessment.</p></div>
+              <strong id="setupChecklistProgress">0 of 4</strong>
+            </div>
+            <div class="setup-progress" aria-hidden="true"><span id="setupProgressBar"></span></div>
+            <div class="setup-steps" id="setupSteps"></div>
+          </section>
           <div class="overview-hero">
             <div><p class="eyebrow">Active job path</p><div class="hero-heading-row"><h2 id="activePathName">Cloud Platform Engineering</h2><button class="icon-button" id="editPathButton" aria-label="Edit active path" title="Edit active path">✎</button></div><p class="hero-description" id="activePathDescription">Build evidence across the infrastructure, delivery, and reliability skills employers are asking for.</p><div class="hero-meta"><span id="activePathTarget">Senior Cloud / Platform Engineer</span><span>·</span><span id="activePathJobCount">0 jobs tracked</span></div></div>
-            <div class="readiness-meter"><div class="meter-label"><span>Readiness signal</span><strong id="readinessScore">0%</strong></div><div class="meter-track"><span id="readinessBar"></span></div><p id="readinessNote">Add your CV and a few knowledge entries to establish a baseline.</p></div>
+            <div class="readiness-meter"><div class="meter-label"><span>Evidence coverage</span><strong id="readinessScore">0%</strong></div><div class="meter-track"><span id="readinessBar"></span></div><p id="readinessNote">Add your CV and a few knowledge entries to establish a baseline.</p><button type="button" class="readiness-explainer" id="readinessExplainer" aria-expanded="false" aria-controls="readinessDetails">How this is calculated</button><div class="readiness-details" id="readinessDetails"><p>This directional score compares recurring skills in your saved jobs with evidence in your CV and knowledge entries. It is not a hiring probability.</p></div></div>
           </div>
+          <section class="next-action panel" id="nextActionPanel">
+            <div><p class="eyebrow">Your next best action</p><h3 id="nextActionTitle">Add your first job description</h3><p id="nextActionDescription">Masari needs a target job to understand what employers are asking for.</p></div>
+            <button type="button" class="button button-dark" id="nextActionButton">Add a job</button>
+          </section>
           <div class="stat-grid">
             <article class="stat-block"><span class="stat-label">Job descriptions</span><strong id="jobsStat">0</strong><span class="stat-foot">in this path</span></article>
             <article class="stat-block"><span class="stat-label">Knowledge signals</span><strong id="knowledgeStat">0</strong><span class="stat-foot">skills with evidence</span></article>
             <article class="stat-block"><span class="stat-label">Top gap</span><strong id="topGapStat">Add data</strong><span class="stat-foot" id="topGapFoot">from job demand</span></article>
-            <article class="stat-block"><span class="stat-label">RAG documents</span><strong id="documentsStat">0</strong><span class="stat-foot">ready to export</span></article>
+            <article class="stat-block"><span class="stat-label">Latest assessment</span><strong id="latestAnalysisStat">Not run</strong><span class="stat-foot">saved privately</span></article>
           </div>
           <div class="content-grid">
-            <section class="panel analysis-panel"><div class="section-heading"><div><p class="eyebrow">Cited AI assessment</p><h3>Saved skill-gap analysis</h3></div><div><button class="button button-light" id="analyzeButton">Run cited analysis</button> <button class="button button-light" data-view-target="knowledge">Manage knowledge <span>→</span></button></div></div><div id="analysisStatus" class="analysis-status hidden" role="status" aria-live="polite"></div><div id="ragResult"></div><div class="preview-heading"><p class="eyebrow">Instant keyword preview</p><span>Directional only—the cited analysis above is authoritative.</span></div><div id="skillLandscape" class="skill-list"></div></section>
+            <section class="panel analysis-panel"><div class="section-heading"><div><p class="eyebrow">Cited AI assessment</p><h3>Your current assessment</h3></div><div><button class="button button-dark" id="analyzeButton">Run cited analysis</button> <button class="button button-light" data-view-target="knowledge">Manage evidence <span>→</span></button></div></div><div id="analysisStatus" class="analysis-status hidden" role="status" aria-live="polite"></div><div id="ragResult"></div><details class="keyword-preview"><summary>View directional keyword preview</summary><div class="preview-heading"><p class="eyebrow">Instant keyword preview</p><span>This automated preview is directional; the cited assessment above is authoritative.</span></div><div id="skillLandscape" class="skill-list"></div></details></section>
             <section class="panel next-panel"><div class="section-heading"><div><p class="eyebrow">Recommended next move</p><h3>Focus plan</h3></div><span class="section-mark">01</span></div><div id="focusPlan" class="focus-plan"></div></section>
           </div>
           <section class="panel jobs-panel"><div class="section-heading"><div><p class="eyebrow">Your evidence set</p><h3>Recent job entries</h3></div><button class="button button-light" data-view-target="paths">View all jobs <span>→</span></button></div><div id="recentJobs" class="job-table"></div></section>
