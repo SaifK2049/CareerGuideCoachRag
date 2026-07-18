@@ -53,6 +53,9 @@ if (missing.length) throw new Error(`JavaScript references missing HTML ids: ${m
 for (const required of ["authGate", "onboardingGate", "appShell", "membershipActionButton", "profileForm", "signinTurnstile", "signupTurnstile", "feedbackForm", "deleteAccountForm", "betaConsentForm"]) {
   if (!ids.includes(required)) throw new Error(`Required production surface is missing: ${required}`);
 }
+if (!ids.includes("analysisStatus") || !app.includes("data-finding-feedback") || !app.includes("data-add-finding-evidence")) {
+  throw new Error("Interactive analysis status or finding feedback controls are missing");
+}
 for (const header of ["Content-Security-Policy", "Strict-Transport-Security", "X-Frame-Options"]) {
   if (!headers.includes(header)) throw new Error(`Required Cloudflare header is missing: ${header}`);
 }

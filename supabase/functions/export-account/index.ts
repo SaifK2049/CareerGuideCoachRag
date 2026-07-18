@@ -40,6 +40,7 @@ Deno.serve(async (request) => {
       userClient.from("career_analyses").select("*").eq("user_id", userId).order("created_at"),
       userClient.from("audit_events").select("*").eq("user_id", userId).order("created_at"),
       userClient.from("beta_feedback").select("*").eq("user_id", userId).order("created_at"),
+      userClient.from("analysis_finding_feedback").select("*").eq("user_id", userId).order("created_at"),
       admin.storage.from("private-cvs").list(userId, { limit: 100 }),
     ]);
     const error = queries.find((result) => result.error)?.error;
@@ -61,7 +62,8 @@ Deno.serve(async (request) => {
       career_analyses: queries[4].data || [],
       audit_events: queries[5].data || [],
       beta_feedback: queries[6].data || [],
-      stored_cv_files: (queries[7].data || []).map((file) => ({
+      analysis_finding_feedback: queries[7].data || [],
+      stored_cv_files: (queries[8].data || []).map((file) => ({
         name: file.name,
         created_at: file.created_at,
         updated_at: file.updated_at,

@@ -350,6 +350,33 @@ try {
   assert.equal(completed.data.status, "succeeded");
   assert.equal(completed.data.findings[0].citations.length, 2);
 
+  const findingFeedback = await rest("analysis_finding_feedback?on_conflict=user_id,analysis_id,finding_index", alice, {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: {
+      user_id: alice.id,
+      analysis_id: completed.data.id,
+      finding_index: 0,
+      rating: "useful",
+    },
+  });
+  assert.equal(findingFeedback.response.status, 201, JSON.stringify(findingFeedback.data));
+  const bobCannotReadFindingFeedback = await rest(
+    `analysis_finding_feedback?analysis_id=eq.${completed.data.id}&select=*`,
+    bob,
+  );
+  assert.deepEqual(bobCannotReadFindingFeedback.data, []);
+  const bobCannotWriteAliceFeedback = await rest("analysis_finding_feedback", bob, {
+    method: "POST",
+    body: {
+      user_id: bob.id,
+      analysis_id: completed.data.id,
+      finding_index: 0,
+      rating: "needs_work",
+    },
+  });
+  assert.equal(bobCannotWriteAliceFeedback.response.status, 403);
+
   const replayed = await serviceRest("rpc/reserve_career_analysis", {
     method: "POST",
     body: {
@@ -482,6 +509,7 @@ try {
   assert.equal(exportResult.data.profile.user_id, alice.id);
   assert.equal(exportResult.data.career_analyses.length, 10);
   assert.equal(exportResult.data.beta_feedback.length, 1);
+  assert.equal(exportResult.data.analysis_finding_feedback.length, 1);
   assert.equal(exportResult.data.stored_cv_files[0].name, "current-cv.pdf");
 
   const newerStripeEvent = await serviceRest("rpc/apply_stripe_subscription_event", {

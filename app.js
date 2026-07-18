@@ -108,11 +108,14 @@ const demoState = {
     { id: "know-2", skill: "Git", title: "Team delivery workflows", level: 3, evidence: "Use Git-based review and release workflows across projects." },
     { id: "know-3", skill: "SQL", title: "Data querying", level: 2, evidence: "Working knowledge of relational queries and reporting datasets." }
   ],
-  analyses: []
+  analyses: [],
+  analysisFeedback: []
 };
 
 let state = loadState();
 let activeView = "overview";
+let analysisTimers = [];
+let analysisUi = {};
 
 function loadState() {
   if (!config.localPreview) return emptyState();
@@ -144,7 +147,8 @@ function emptyState() {
     cv: { fileName: "", text: "", uploadedAt: "" },
     paths: [],
     knowledge: [],
-    analyses: []
+    analyses: [],
+    analysisFeedback: []
   };
 }
 
@@ -156,6 +160,7 @@ async function loadCloudState() {
     cloud.from("job_descriptions").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
     cloud.from("knowledge_evidence").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
     cloud.from("career_analyses").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(30),
+    cloud.from("analysis_finding_feedback").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
     cloud.rpc("get_my_account_access")
   ]);
   results.forEach(function(result) { if (result.error) throw result.error; });
@@ -184,9 +189,10 @@ async function loadCloudState() {
     knowledge: (results[3].data || []).map(function(item) {
       return { id: item.id, skill: item.skill, title: item.title, level: item.confidence, evidence: item.evidence };
     }),
-    analyses: (results[4].data || []).map(normalizeAnalysisRecord)
+    analyses: (results[4].data || []).map(normalizeAnalysisRecord),
+    analysisFeedback: results[5].data || []
   };
-  accountAccess = results[5].data || accountAccess;
+  accountAccess = results[6].data || accountAccess;
 }
 
 async function deleteMissing(table, ids) {
@@ -271,6 +277,72 @@ function normalizeAnalysisRecord(record) {
   };
 }
 
+function setAnalysisStatus(pathId, status, message, requestId) {
+  analysisUi[pathId] = { status: status, message: message, requestId: requestId || "", updatedAt: new Date().toISOString() };
+  try { sessionStorage.setItem("masari:analysis-status", JSON.stringify(analysisUi)); } catch (_error) {}
+  renderAnalysisStatus(activePath());
+}
+
+function restoreAnalysisStatus() {
+  try { analysisUi = JSON.parse(sessionStorage.getItem("masari:analysis-status")) || {}; }
+  catch (_error) { analysisUi = {}; }
+}
+
+function clearAnalysisTimers() {
+  analysisTimers.forEach(window.clearTimeout);
+  analysisTimers = [];
+}
+
+function renderAnalysisStatus(path) {
+  const box = document.getElementById("analysisStatus");
+  const current = path && analysisUi[path.id];
+  if (!current) {
+    box.className = "analysis-status hidden";
+    box.innerHTML = "";
+    return;
+  }
+  const failed = current.status === "failed";
+  box.className = "analysis-status is-" + safe(current.status);
+  box.innerHTML = '<span class="analysis-status-dot" aria-hidden="true"></span><div><strong>' +
+    safe(failed ? "Analysis needs attention" : current.status === "completed" ? "Analysis completed" : "Analysis in progress") +
+    '</strong><p>' + safe(current.message) + '</p></div>' +
+    (failed ? '<button type="button" class="button button-light analysis-retry" id="analysisRetryButton">Try again</button>' : "");
+  const retry = box.querySelector("#analysisRetryButton");
+  if (retry) retry.addEventListener("click", function() { document.getElementById("analyzeButton").click(); });
+}
+
+function safeSourceUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" ? url.href : "";
+  } catch (_error) { return ""; }
+}
+
+async function saveFindingFeedback(analysis, findingIndex, rating) {
+  if (!analysis || !analysis.id) return;
+  const row = {
+    user_id: session && session.user.id,
+    analysis_id: analysis.id,
+    finding_index: findingIndex,
+    rating: rating,
+    updated_at: new Date().toISOString()
+  };
+  if (cloud && session) {
+    const result = await cloud.from("analysis_finding_feedback").upsert(row, {
+      onConflict: "user_id,analysis_id,finding_index"
+    }).select().single();
+    if (result.error) throw result.error;
+    row.id = result.data.id;
+    row.created_at = result.data.created_at;
+  }
+  state.analysisFeedback = (state.analysisFeedback || []).filter(function(item) {
+    return !(item.analysis_id === analysis.id && Number(item.finding_index) === findingIndex);
+  });
+  state.analysisFeedback.push(row);
+  renderAnalysisResult(activePath());
+  toast(rating === "useful" ? "Marked as useful" : "Feedback saved for improvement");
+}
+
 function renderAnalysisResult(path) {
   const box = document.getElementById("ragResult");
   const analysis = path && (state.analyses || []).find(function(item) {
@@ -288,23 +360,58 @@ function renderAnalysisResult(path) {
     safe(analysis.summary) + '</p><div class="analysis-findings">' +
     (analysis.findings || []).map(function(item, findingIndex) {
       const badgeClass = item.confidence === "strong" ? "good" : item.confidence === "partial" || item.confidence === "uncertain" ? "warn" : "gap";
+      const feedback = (state.analysisFeedback || []).find(function(entry) {
+        return entry.analysis_id === analysis.id && Number(entry.finding_index) === findingIndex;
+      });
       return '<article class="analysis-finding"><div class="analysis-finding-head"><strong>' + safe(item.skill) +
         '</strong><span class="skill-badge ' + badgeClass + '">' + safe(item.confidence) + '</span></div><p>' +
-        safe(item.explanation) + '</p><div class="citation-list">' +
+        safe(item.explanation) + '</p><div class="citation-list" aria-label="Supporting sources">' +
         (item.citations || []).map(function(label) {
           const source = sourceMap[label] || {};
           const title = source.title || source.source_type || "Private source";
           const detailId = "citation-" + findingIndex + "-" + String(label).replace(/[^A-Za-z0-9-]/g, "");
-          return '<button type="button" class="citation-button" data-citation-target="' + detailId + '">' +
+          const sourceUrl = safeSourceUrl(source.source_url);
+          return '<div class="citation-item"><button type="button" class="citation-button" data-citation-target="' + detailId +
+            '" aria-expanded="false" aria-controls="' + detailId + '">' +
             safe(label) + ' · ' + safe(title) + '</button><div class="citation-detail" id="' + detailId + '"><strong>' +
             safe(source.source_type || "source") + (source.company ? " · " + source.company : "") +
-            '</strong><br />' + safe(source.excerpt || "The source excerpt is unavailable.") + '</div>';
-        }).join("") + '</div></article>';
+            '</strong><p>' + safe(source.excerpt || "The source excerpt is unavailable.") + '</p>' +
+            (sourceUrl ? '<a href="' + safe(sourceUrl) + '" target="_blank" rel="noreferrer">Open original job source ↗</a>' : "") +
+            '</div></div>';
+        }).join("") + '</div><div class="finding-actions"><span>Was this finding useful?</span><button type="button" class="feedback-chip' +
+        (feedback && feedback.rating === "useful" ? " is-selected" : "") + '" data-finding-feedback="useful" data-finding-index="' +
+        findingIndex + '">Useful</button><button type="button" class="feedback-chip' +
+        (feedback && feedback.rating === "needs_work" ? " is-selected" : "") + '" data-finding-feedback="needs_work" data-finding-index="' +
+        findingIndex + '">Needs work</button><button type="button" class="text-button add-evidence-link" data-add-finding-evidence="' +
+        findingIndex + '">Add evidence <span>→</span></button></div></article>';
     }).join("") + '</div></div>';
   box.querySelectorAll("[data-citation-target]").forEach(function(button) {
     button.addEventListener("click", function() {
       const detail = document.getElementById(button.dataset.citationTarget);
-      if (detail) detail.classList.toggle("is-visible");
+      if (detail) {
+        const visible = detail.classList.toggle("is-visible");
+        button.setAttribute("aria-expanded", String(visible));
+      }
+    });
+  });
+  box.querySelectorAll("[data-finding-feedback]").forEach(function(button) {
+    button.addEventListener("click", async function() {
+      button.disabled = true;
+      try {
+        await saveFindingFeedback(analysis, Number(button.dataset.findingIndex), button.dataset.findingFeedback);
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message || "Feedback could not be saved");
+      }
+    });
+  });
+  box.querySelectorAll("[data-add-finding-evidence]").forEach(function(button) {
+    button.addEventListener("click", function() {
+      const item = analysis.findings[Number(button.dataset.addFindingEvidence)];
+      setView("knowledge");
+      openKnowledgeModal();
+      document.getElementById("knowledgeSkill").value = item && item.skill || "";
+      document.getElementById("knowledgeTitle").focus();
     });
   });
 }
@@ -946,6 +1053,14 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
   pendingAnalysisRequests[path.id] = requestId;
   button.disabled = true;
   button.textContent = "Analyzing…";
+  clearAnalysisTimers();
+  setAnalysisStatus(path.id, "preparing", "Preparing your private evidence set…", requestId);
+  analysisTimers.push(window.setTimeout(function() {
+    setAnalysisStatus(path.id, "comparing", "Comparing your evidence with the target role…", requestId);
+  }, 1200));
+  analysisTimers.push(window.setTimeout(function() {
+    setAnalysisStatus(path.id, "generating", "Generating cited findings and checking every source…", requestId);
+  }, 5000));
   try {
     await saveQueue;
     const result = await cloud.functions.invoke("analyze-career", {
@@ -971,10 +1086,16 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
     state.analyses = (state.analyses || []).filter(function(item) { return item.id !== analysis.id && item.requestId !== analysis.requestId; });
     state.analyses.unshift(analysis);
     delete pendingAnalysisRequests[path.id];
+    clearAnalysisTimers();
+    setAnalysisStatus(path.id, "completed", "Your cited findings were saved privately.", requestId);
     renderAnalysisResult(path);
     toast(result.data.replayed ? "Saved analysis restored" : "Cited analysis saved privately");
-  } catch (error) { toast(await functionErrorMessage(error, "Analysis failed")); }
-  finally { button.disabled = false; button.textContent = "Run cited analysis"; }
+  } catch (error) {
+    clearAnalysisTimers();
+    const message = await functionErrorMessage(error, "Analysis failed");
+    setAnalysisStatus(path.id, "failed", message, requestId);
+    toast(message);
+  } finally { button.disabled = false; button.textContent = "Run cited analysis"; }
 });
 
 document.getElementById("pathForm").addEventListener("submit", function(event) {
@@ -1158,6 +1279,7 @@ document.getElementById("deleteAccountForm").addEventListener("submit", async fu
 });
 
 async function initializeCloud() {
+  restoreAnalysisStatus();
   if (!cloud) {
     if (config.localPreview) {
       state = loadState();
