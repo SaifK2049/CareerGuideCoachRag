@@ -151,6 +151,12 @@ if (!app.includes("if (config.localPreview) localStorage.setItem")) {
 if (!app.includes('authEvent === "TOKEN_REFRESHED" || authEvent === "USER_UPDATED"')) {
   throw new Error("Routine auth refreshes must not overwrite the loaded workspace");
 }
+if (!app.includes('"x-request-id": requestId') || !app.includes("Support ID: ")) {
+  throw new Error("Analysis failures must expose a privacy-safe monitoring reference");
+}
+if (!analysisFunction.includes('"analysis_started"') || !analysisFunction.includes('"analysis_failed"')) {
+  throw new Error("Analysis Edge Function structured monitoring events are missing");
+}
 if (!/await saveState\(\);[\s\S]*?cloud\.auth\.updateUser\(\{ data: \{ display_name: state\.profile\.displayName \} \}\)/.test(app)) {
   throw new Error("Onboarding must persist the workspace before updating auth metadata");
 }

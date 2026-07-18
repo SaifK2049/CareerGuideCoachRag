@@ -144,6 +144,9 @@ function normalizeAnalysis(value: unknown, validLabels: Set<string>) {
 }
 
 Deno.serve(async (request) => {
+  const startedAt = Date.now();
+  const suppliedRequestId = request.headers.get("x-request-id") || "";
+  const correlationId = uuidPattern.test(suppliedRequestId) ? suppliedRequestId : crypto.randomUUID();
   const corsResult = handleCors(request);
   if (corsResult) return corsResult;
   if (request.method !== "POST") return jsonResponse(request, { error: "Method not allowed" }, 405);
@@ -182,6 +185,12 @@ Deno.serve(async (request) => {
 
     const payload = validatePayload(await request.json() as AnalysisPayload);
     requestId = payload.requestId;
+    console.log(JSON.stringify({
+      event: "analysis_started",
+      request_id: correlationId,
+      document_count: payload.documents.length,
+      timestamp: new Date().toISOString(),
+    }));
 
     const { data: existing, error: existingError } = await admin.from("career_analyses")
       .select("id,request_id,path_id,target_role,status,summary,findings,sources,model,created_at,completed_at")
@@ -386,12 +395,21 @@ Deno.serve(async (request) => {
         model,
       },
     });
+    console.log(JSON.stringify({
+      event: "analysis_succeeded",
+      request_id: correlationId,
+      duration_ms: Date.now() - startedAt,
+      finding_count: normalized.findings.length,
+      model,
+      timestamp: new Date().toISOString(),
+    }));
     return jsonResponse(request, {
       analysis: completed,
       summary: normalized.summary,
       findings: normalized.findings,
       access: reservation.access,
-    });
+      request_id: correlationId,
+    }, 200, { "X-Request-ID": correlationId });
   } catch (error) {
     let known = error instanceof AnalysisError
       ? error
@@ -410,11 +428,22 @@ Deno.serve(async (request) => {
         );
       }
     }
-    console.error("analyze-career failed", { requestId, code: known.code });
+    console.error(JSON.stringify({
+      event: "analysis_failed",
+      request_id: correlationId,
+      duration_ms: Date.now() - startedAt,
+      code: known.code,
+      status: known.status,
+      timestamp: new Date().toISOString(),
+    }));
     return jsonResponse(request, {
       error: known.message,
       code: known.code,
       retry_after_seconds: known.retryAfter,
-    }, known.status, known.retryAfter ? { "Retry-After": String(known.retryAfter) } : {});
+      request_id: correlationId,
+    }, known.status, {
+      ...(known.retryAfter ? { "Retry-After": String(known.retryAfter) } : {}),
+      "X-Request-ID": correlationId,
+    });
   }
 });

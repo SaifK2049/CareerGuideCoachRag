@@ -19,8 +19,9 @@ function allowedOrigins(): Set<string> {
 export function corsHeaders(request: Request): Record<string, string> {
   const origin = (request.headers.get("Origin") || "").replace(/\/$/, "");
   const headers: Record<string, string> = {
-    "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+    "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-request-id",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Expose-Headers": "x-request-id",
     "Vary": "Origin",
   };
   if (origin && allowedOrigins().has(origin)) {

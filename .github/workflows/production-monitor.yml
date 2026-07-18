@@ -1,0 +1,28 @@
+name: Production monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-monitor
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check production website and analysis preflight
+        env:
+          MONITOR_APP_URL: https://masari-qujfb.ondigitalocean.app
+          MONITOR_SUPABASE_URL: https://fdievvhtyllgpdoedcai.supabase.co
+        run: node scripts/production-smoke.mjs

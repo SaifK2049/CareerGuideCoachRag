@@ -573,7 +573,10 @@ async function functionErrorMessage(error, fallback) {
       if (payload.code === "RATE_LIMITED") {
         return "Too many requests. Try again in " + Number(payload.retry_after_seconds || 1) + " seconds.";
       }
-      if (payload.error) return payload.error;
+      if (payload.error) {
+        const supportId = typeof payload.request_id === "string" ? payload.request_id.slice(0, 8) : "";
+        return payload.error + (supportId ? " Support ID: " + supportId : "");
+      }
     }
   } catch (_error) {}
   return error && error.message || fallback;
@@ -946,6 +949,7 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
   try {
     await saveQueue;
     const result = await cloud.functions.invoke("analyze-career", {
+      headers: { "x-request-id": requestId },
       body: { requestId: requestId, pathId: path.id, targetRole: path.target, documents: ragDocuments() }
     });
     if (result.error) throw result.error;

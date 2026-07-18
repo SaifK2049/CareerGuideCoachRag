@@ -78,6 +78,19 @@ npm run test:integration
 npx supabase db advisors --local --type all --level info --fail-on warn
 ```
 
+## Production monitoring
+
+GitHub Actions runs `npm run monitor:production` every 15 minutes and can also be
+started manually. It verifies that the production homepage and application script
+are reachable and that the `analyze-career` CORS preflight accepts the exact
+production origin, including the monitoring request header.
+
+Analysis executions write structured, privacy-safe JSON events to Supabase Edge
+Function logs. Events contain request IDs, durations, status or error codes, and
+counts, but never CV text, job descriptions, email addresses, or access tokens.
+Failed analyses display the first eight characters of the request ID as a support
+reference that can be searched in the Supabase Logs Explorer.
+
 The integration suite creates temporary admin-invited users and verifies disabled public signup, consent, RLS isolation, concurrent rate limiting, cross-tenant rejection, beta limits, persisted/idempotent analyses, quota refunds, feedback, account export, Stripe isolation, private CV storage, and permanent account deletion. Test users are deleted afterward.
 
 ## Deploy to Cloudflare Pages
