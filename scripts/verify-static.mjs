@@ -148,6 +148,12 @@ if (/SERVICE_ROLE|SECRET_KEY/.test(app)) throw new Error("A server credential na
 if (!app.includes("if (config.localPreview) localStorage.setItem")) {
   throw new Error("Production browser persistence guard is missing");
 }
+if (!app.includes('authEvent === "TOKEN_REFRESHED" || authEvent === "USER_UPDATED"')) {
+  throw new Error("Routine auth refreshes must not overwrite the loaded workspace");
+}
+if (!/await saveState\(\);[\s\S]*?cloud\.auth\.updateUser\(\{ data: \{ display_name: state\.profile\.displayName \} \}\)/.test(app)) {
+  throw new Error("Onboarding must persist the workspace before updating auth metadata");
+}
 if (!app.includes("captchaToken: captchaTokens.signin") || !app.includes("captchaToken: captchaTokens.signup")) {
   throw new Error("Sign-in, password recovery and sign-up must pass Cloudflare Turnstile tokens to Supabase");
 }

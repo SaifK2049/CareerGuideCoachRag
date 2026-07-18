@@ -204,8 +204,9 @@ async function contentHash(text) {
 
 async function persistCloudState() {
   const userId = session.user.id;
-  const pathRows = state.paths.map(function(path) { return { id: path.id, user_id: userId, name: path.name, target: path.target, description: path.description || "", updated_at: new Date().toISOString() }; });
-  const jobRows = await Promise.all(state.paths.flatMap(function(path) {
+  const pendingState = structuredClone(state);
+  const pathRows = pendingState.paths.map(function(path) { return { id: path.id, user_id: userId, name: path.name, target: path.target, description: path.description || "", updated_at: new Date().toISOString() }; });
+  const jobRows = await Promise.all(pendingState.paths.flatMap(function(path) {
     return path.jobs.map(async function(job) {
       return {
         id: job.id, user_id: userId, path_id: path.id, title: job.title,
@@ -215,7 +216,7 @@ async function persistCloudState() {
       };
     });
   }));
-  const evidenceRows = state.knowledge.map(function(item) { return { id: item.id, user_id: userId, skill: item.skill, title: item.title, confidence: item.level, evidence: item.evidence, updated_at: new Date().toISOString() }; });
+  const evidenceRows = pendingState.knowledge.map(function(item) { return { id: item.id, user_id: userId, skill: item.skill, title: item.title, confidence: item.level, evidence: item.evidence, updated_at: new Date().toISOString() }; });
   for (const item of [[pathRows, "career_paths"], [jobRows, "job_descriptions"], [evidenceRows, "knowledge_evidence"]]) {
     if (item[0].length) {
       const result = await cloud.from(item[1]).upsert(item[0]);
@@ -223,13 +224,13 @@ async function persistCloudState() {
     }
   }
   const profileResult = await cloud.from("career_profiles").upsert({
-    user_id: userId, active_path_id: state.activePathId || null, cv_file_name: state.cv.fileName || "",
-    cv_text: state.cv.text || "", cv_uploaded_at: state.cv.uploadedAt || null,
-    display_name: state.profile.displayName || "", career_goal: state.profile.careerGoal || "",
-    experience_level: state.profile.experienceLevel || "", country: state.profile.country || "",
-    onboarding_complete: Boolean(state.profile.onboardingComplete),
-    beta_terms_accepted_at: state.profile.betaTermsAcceptedAt || null,
-    privacy_notice_version: state.profile.privacyNoticeVersion || null,
+    user_id: userId, active_path_id: pendingState.activePathId || null, cv_file_name: pendingState.cv.fileName || "",
+    cv_text: pendingState.cv.text || "", cv_uploaded_at: pendingState.cv.uploadedAt || null,
+    display_name: pendingState.profile.displayName || "", career_goal: pendingState.profile.careerGoal || "",
+    experience_level: pendingState.profile.experienceLevel || "", country: pendingState.profile.country || "",
+    onboarding_complete: Boolean(pendingState.profile.onboardingComplete),
+    beta_terms_accepted_at: pendingState.profile.betaTermsAcceptedAt || null,
+    privacy_notice_version: pendingState.profile.privacyNoticeVersion || null,
     updated_at: new Date().toISOString()
   });
   if (profileResult.error) throw profileResult.error;
@@ -902,9 +903,9 @@ document.getElementById("onboardingForm").addEventListener("submit", async funct
       const upload = await cloud.storage.from("private-cvs").upload(session.user.id + "/current-cv.pdf", file, { upsert: true, contentType: "application/pdf" });
       if (upload.error) throw upload.error;
     }
-    await cloud.auth.updateUser({ data: { display_name: state.profile.displayName } });
-    saveState();
-    await saveQueue;
+    await saveState();
+    const userUpdate = await cloud.auth.updateUser({ data: { display_name: state.profile.displayName } });
+    if (userUpdate.error) throw userUpdate.error;
     message.textContent = "";
     showSurface("app");
     render();
@@ -1178,6 +1179,7 @@ async function initializeCloud() {
     window.setTimeout(async function() {
       try {
         session = nextSession;
+        if (authEvent === "TOKEN_REFRESHED" || authEvent === "USER_UPDATED") return;
         cloudReady = false;
         if (session) {
           localStorage.removeItem(cacheKey());
