@@ -57,6 +57,12 @@ if (missing.length) throw new Error(`JavaScript references missing HTML ids: ${m
 for (const required of ["authGate", "onboardingGate", "appShell", "membershipActionButton", "profileForm", "signinTurnstile", "signupTurnstile", "signupForm", "feedbackForm", "deleteAccountForm", "betaConsentForm"]) {
   if (!ids.includes(required)) throw new Error(`Required production surface is missing: ${required}`);
 }
+for (const required of ["resetPasswordModal", "resetPasswordDescription", "resetPasswordSubmit"]) {
+  if (!ids.includes(required)) throw new Error(`Invitation password setup surface is missing: ${required}`);
+}
+if (!app.includes('initialAuthLinkType === "invite"') || !app.includes('openPasswordSetup("invite")')) {
+  throw new Error("Accepted invitations must require password creation");
+}
 if (!ids.includes("analysisStatus") || !app.includes("data-finding-feedback") || !app.includes("data-add-finding-evidence")) {
   throw new Error("Interactive analysis status or finding feedback controls are missing");
 }

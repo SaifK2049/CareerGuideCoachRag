@@ -1,6 +1,10 @@
 const STORAGE_KEY = "career-rag-workspace-v1";
 const PRIVACY_NOTICE_VERSION = "2026-07-16";
 const config = window.CAREER_RAG_CONFIG || {};
+const initialAuthLinkType = new URLSearchParams(window.location.hash.slice(1)).get("type")
+  || new URLSearchParams(window.location.search).get("type")
+  || "";
+let passwordSetupMode = initialAuthLinkType === "invite" ? "invite" : "";
 const betaMode = config.betaMode !== false;
 const billingEnabled = config.billingEnabled === true;
 const signupEnabled = config.signupEnabled === true;
@@ -716,6 +720,19 @@ function renderProfile() {
 function openModal(id) { document.getElementById(id).classList.add("is-open"); document.getElementById(id).setAttribute("aria-hidden", "false"); }
 function closeModal(id) { document.getElementById(id).classList.remove("is-open"); document.getElementById(id).setAttribute("aria-hidden", "true"); }
 
+function openPasswordSetup(mode) {
+  passwordSetupMode = mode;
+  const invited = mode === "invite";
+  document.getElementById("resetPasswordTitle").textContent = invited ? "Create your password" : "Choose a new password";
+  document.getElementById("resetPasswordDescription").textContent = invited
+    ? "Your invitation has been accepted. Create a password to secure your Masari account and sign in again later."
+    : "Use at least ten characters with upper-case, lower-case, and number characters. Do not reuse a password.";
+  document.getElementById("resetPasswordSubmit").textContent = invited ? "Create password and continue" : "Update password";
+  document.getElementById("resetPasswordMessage").textContent = "";
+  openModal("resetPasswordModal");
+  window.setTimeout(function() { document.getElementById("newPassword").focus(); }, 0);
+}
+
 function openPathModal(path) {
   document.getElementById("pathId").value = path ? path.id : "";
   document.getElementById("pathName").value = path ? path.name : "";
@@ -925,7 +942,7 @@ document.querySelectorAll("[data-open-modal]").forEach(function(button) {
 });
 document.querySelectorAll(".modal-backdrop").forEach(function(backdrop) {
   backdrop.addEventListener("click", function(event) {
-    if (event.target === backdrop && backdrop.id !== "betaConsentModal") closeModal(backdrop.id);
+    if (event.target === backdrop && !["betaConsentModal", "resetPasswordModal"].includes(backdrop.id)) closeModal(backdrop.id);
   });
 });
 document.getElementById("editPathButton").addEventListener("click", function() { openPathModal(activePath()); });
@@ -1005,12 +1022,28 @@ document.getElementById("resetPasswordForm").addEventListener("submit", async fu
   const password = document.getElementById("newPassword").value;
   const confirmation = document.getElementById("confirmPassword").value;
   const message = document.getElementById("resetPasswordMessage");
+  message.classList.remove("is-success");
   if (password !== confirmation) { message.textContent = "The passwords do not match."; return; }
+  if (password.length < 10 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+    message.textContent = "Use at least 10 characters with an upper-case letter, lower-case letter, and number.";
+    return;
+  }
+  const button = document.getElementById("resetPasswordSubmit");
+  button.disabled = true;
+  message.textContent = passwordSetupMode === "invite" ? "Securing your account…" : "Updating your password…";
   const result = await cloud.auth.updateUser({ password: password });
-  if (result.error) { message.textContent = result.error.message; return; }
+  if (result.error) {
+    message.textContent = result.error.message;
+    button.disabled = false;
+    return;
+  }
+  const invited = passwordSetupMode === "invite";
+  passwordSetupMode = "";
+  history.replaceState({}, "", window.location.pathname + window.location.search);
   closeModal("resetPasswordModal");
   this.reset();
-  toast("Your password has been updated");
+  button.disabled = false;
+  toast(invited ? "Password created. Welcome to Masari." : "Your password has been updated");
 });
 document.getElementById("onboardingSignoutButton").addEventListener("click", function() { cloud.auth.signOut({ scope: "local" }); });
 document.getElementById("betaConsentSignoutButton").addEventListener("click", function() { cloud.auth.signOut({ scope: "local" }); });
@@ -1400,7 +1433,8 @@ async function initializeCloud() {
           document.querySelector(".storage-status span:last-child").textContent = "Encrypted cloud workspace";
           document.getElementById("saveState").textContent = "Saved privately";
           showSignedInSurface();
-          if (authEvent === "PASSWORD_RECOVERY") openModal("resetPasswordModal");
+          if (authEvent === "PASSWORD_RECOVERY") openPasswordSetup("recovery");
+          else if (passwordSetupMode === "invite") openPasswordSetup("invite");
         } else {
           state = emptyState();
           accountAccess = { plan: "free", status: "free", rag_used: 0, rag_limit: betaMode ? 10 : 2, features: {} };
@@ -1419,6 +1453,7 @@ async function initializeCloud() {
     cloudReady = true;
     document.getElementById("saveState").textContent = "Saved privately";
     showSignedInSurface();
+    if (passwordSetupMode === "invite") openPasswordSetup("invite");
   } else {
     showSurface("auth");
   }
