@@ -114,11 +114,16 @@ const demoState = {
     { id: "know-3", skill: "SQL", title: "Data querying", level: 2, evidence: "Working knowledge of relational queries and reporting datasets." }
   ],
   analyses: [],
-  analysisFeedback: []
+  analysisFeedback: [],
+  actionItems: [],
+  evidenceLinks: [],
+  cvGuidance: [],
+  sharedReports: []
 };
 
 let state = loadState();
 let activeView = "overview";
+let activePlanFilter = "all";
 let analysisTimers = [];
 let analysisUi = {};
 
@@ -153,7 +158,11 @@ function emptyState() {
     paths: [],
     knowledge: [],
     analyses: [],
-    analysisFeedback: []
+    analysisFeedback: [],
+    actionItems: [],
+    evidenceLinks: [],
+    cvGuidance: [],
+    sharedReports: []
   };
 }
 
@@ -166,6 +175,10 @@ async function loadCloudState() {
     cloud.from("knowledge_evidence").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
     cloud.from("career_analyses").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(30),
     cloud.from("analysis_finding_feedback").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
+    cloud.from("action_plan_items").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+    cloud.from("analysis_evidence_links").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+    cloud.from("cv_guidance").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(30),
+    cloud.from("shared_reports").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
     cloud.rpc("get_my_account_access")
   ]);
   results.forEach(function(result) { if (result.error) throw result.error; });
@@ -174,7 +187,12 @@ async function loadCloudState() {
     return {
       id: path.id, name: path.name, target: path.target, description: path.description,
       jobs: (results[2].data || []).filter(function(job) { return job.path_id === path.id; }).map(function(job) {
-        return { id: job.id, title: job.title, company: job.company, location: job.location, source: job.source_url, description: job.description, createdAt: job.created_at };
+        return {
+          id: job.id, title: job.title, company: job.company, location: job.location,
+          source: job.source_url, description: job.description, status: job.application_status || "saved",
+          closingDate: job.closing_date || "", appliedAt: job.applied_at || "", notes: job.notes || "",
+          createdAt: job.created_at
+        };
       })
     };
   });
@@ -195,9 +213,13 @@ async function loadCloudState() {
       return { id: item.id, skill: item.skill, title: item.title, level: item.confidence, evidence: item.evidence };
     }),
     analyses: (results[4].data || []).map(normalizeAnalysisRecord),
-    analysisFeedback: results[5].data || []
+    analysisFeedback: results[5].data || [],
+    actionItems: results[6].data || [],
+    evidenceLinks: results[7].data || [],
+    cvGuidance: results[8].data || [],
+    sharedReports: results[9].data || []
   };
-  accountAccess = results[6].data || accountAccess;
+  accountAccess = results[10].data || accountAccess;
 }
 
 async function deleteMissing(table, ids) {
@@ -223,6 +245,9 @@ async function persistCloudState() {
         id: job.id, user_id: userId, path_id: path.id, title: job.title,
         company: job.company || "", location: job.location || "", source_url: job.source || "",
         description: job.description, content_hash: await contentHash(job.description),
+        application_status: job.status || "saved", closing_date: job.closingDate || null,
+        applied_at: job.appliedAt ? new Date(job.appliedAt + "T12:00:00Z").toISOString() : null,
+        notes: job.notes || "",
         updated_at: new Date().toISOString()
       };
     });
@@ -376,9 +401,16 @@ function renderAnalysisResult(path) {
       const feedback = (state.analysisFeedback || []).find(function(entry) {
         return entry.analysis_id === analysis.id && Number(entry.finding_index) === findingIndex;
       });
+      const linkedEvidence = (state.evidenceLinks || []).filter(function(entry) {
+        return entry.analysis_id === analysis.id && Number(entry.finding_index) === findingIndex;
+      }).map(function(entry) {
+        return state.knowledge.find(function(evidence) { return evidence.id === entry.evidence_id; });
+      }).filter(Boolean);
       return '<article class="analysis-finding"><div class="analysis-finding-head"><strong>' + safe(item.skill) +
         '</strong><span class="skill-badge ' + badgeClass + '">' + safe(item.confidence) + '</span></div><p>' +
-        safe(item.explanation) + '</p><div class="citation-list" aria-label="Supporting sources">' +
+        safe(item.explanation) + '</p>' + (linkedEvidence.length ? '<div class="finding-evidence-links"><strong>Connected evidence</strong><span>' +
+        linkedEvidence.map(function(evidence) { return safe(evidence.title); }).join("</span><span>") +
+        '</span></div>' : "") + '<div class="citation-list" aria-label="Supporting sources">' +
         (item.citations || []).map(function(label) {
           const source = sourceMap[label] || {};
           const title = source.title || source.source_type || "Private source";
@@ -395,7 +427,8 @@ function renderAnalysisResult(path) {
         (feedback && feedback.rating === "useful" ? " is-selected" : "") + '" data-finding-feedback="useful" data-finding-index="' +
         findingIndex + '">Useful</button><button type="button" class="feedback-chip' +
         (feedback && feedback.rating === "needs_work" ? " is-selected" : "") + '" data-finding-feedback="needs_work" data-finding-index="' +
-        findingIndex + '">Needs work</button><button type="button" class="text-button add-evidence-link" data-add-finding-evidence="' +
+        findingIndex + '">Needs work</button><button type="button" class="text-button" data-plan-finding="' +
+        findingIndex + '">Add to plan <span>→</span></button><button type="button" class="text-button add-evidence-link" data-add-finding-evidence="' +
         findingIndex + '">Add evidence <span>→</span></button></div></article>';
     }).join("") + '</div></div>';
   box.querySelectorAll("[data-citation-target]").forEach(function(button) {
@@ -425,6 +458,19 @@ function renderAnalysisResult(path) {
       openKnowledgeModal();
       document.getElementById("knowledgeSkill").value = item && item.skill || "";
       document.getElementById("knowledgeTitle").focus();
+    });
+  });
+  box.querySelectorAll("[data-plan-finding]").forEach(function(button) {
+    button.addEventListener("click", function() {
+      const findingIndex = Number(button.dataset.planFinding);
+      const item = analysis.findings[findingIndex];
+      openPlanItemModal(null, {
+        analysisId: analysis.id,
+        findingIndex: findingIndex,
+        skill: item && item.skill || "",
+        title: item ? "Build evidence for " + item.skill : "Close evidence gap",
+        description: item && item.explanation || ""
+      });
     });
   });
 }
@@ -504,6 +550,7 @@ function runOverviewAction(action) {
   else if (action === "job") openJobModal();
   else if (action === "knowledge") { setView("knowledge"); openKnowledgeModal(); }
   else if (action === "analysis") document.getElementById("analyzeButton").click();
+  else if (action === "plan") { setView("plan"); openPlanItemModal(); }
 }
 
 function bindEmptyActions(container) {
@@ -619,6 +666,8 @@ function render() {
     renderNextAction(null);
     renderKnowledge();
     renderProfile();
+    renderActionPlan(null);
+    renderProgress(null);
     return;
   }
   const items = analysisFor(path);
@@ -644,9 +693,16 @@ function render() {
   renderPaths(path);
   renderKnowledge();
   renderProfile();
+  renderActionPlan(path);
+  renderProgress(path);
   renderSetupChecklist(path);
   renderNextAction(path);
-  document.getElementById("pageTitle").textContent = activeView === "overview" ? "Overview" : activeView === "paths" ? "Job paths" : activeView === "knowledge" ? "Knowledge" : "Profile & CV";
+  document.getElementById("pageTitle").textContent = activeView === "overview" ? "Overview"
+    : activeView === "paths" ? "Job paths"
+    : activeView === "knowledge" ? "Knowledge"
+    : activeView === "plan" ? "Action plan"
+    : activeView === "progress" ? "Progress & reports"
+    : "Profile & CV";
 }
 
 function renderSkills(items) {
@@ -673,7 +729,13 @@ function renderFocus(items) {
 function renderJobs(box, jobs) {
   if (!jobs.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>No job entries yet</strong><p>Add a description to start measuring employer demand.</p><button type="button" class="button button-light" data-empty-action="job">Add a job description</button></div>'; bindEmptyActions(box); return; }
   box.innerHTML = jobs.map(function(job) {
-    return '<div class="job-row"><div class="job-title-wrap"><div class="job-title">' + safe(job.title) + '</div><span>' + safe(job.description.slice(0, 95)) + (job.description.length > 95 ? "…" : "") + '</span></div><div class="job-company">' + safe(job.company || "Independent") + '</div><div class="job-location">' + safe(job.location || "Location not set") + '</div><button class="row-action" data-edit-job="' + job.id + '" aria-label="Edit job" title="Edit job">✎</button></div>';
+    return '<div class="job-row"><div class="job-title-wrap"><div class="job-title">' + safe(job.title) + '</div><span>' +
+      safe(job.description.slice(0, 95)) + (job.description.length > 95 ? "…" : "") +
+      '</span></div><div class="job-company">' + safe(job.company || "Independent") +
+      '</div><div class="job-location"><span class="job-status is-' + safe(job.status || "saved") + '">' +
+      safe((job.status || "saved").replace("_", " ")) + '</span>' +
+      (job.closingDate ? '<small>Closes ' + safe(formatDate(job.closingDate + "T12:00:00Z")) + '</small>' : "") +
+      '</div><button class="row-action" data-edit-job="' + job.id + '" aria-label="Edit job" title="Edit job">✎</button></div>';
   }).join("");
   box.querySelectorAll("[data-edit-job]").forEach(function(button) { button.addEventListener("click", function() { openJobModal(button.dataset.editJob); }); });
 }
@@ -703,6 +765,141 @@ function renderKnowledge() {
     return '<article class="knowledge-item"><div class="knowledge-item-top"><div><div class="skill-tag">' + safe(item.skill) + '</div><h3>' + safe(item.title) + '</h3></div><div class="confidence" aria-label="Confidence ' + item.level + ' of 3">' + dots + '</div></div><p>' + safe(item.evidence) + '</p><button class="text-button" data-edit-knowledge="' + item.id + '">Edit evidence <span>↗</span></button></article>';
   }).join("");
   list.querySelectorAll("[data-edit-knowledge]").forEach(function(button) { button.addEventListener("click", function() { openKnowledgeModal(button.dataset.editKnowledge); }); });
+}
+
+function renderActionPlan(path) {
+  const list = document.getElementById("actionPlanList");
+  const allItems = (state.actionItems || []).filter(function(item) { return !path || !item.path_id || item.path_id === path.id; });
+  const completed = allItems.filter(function(item) { return item.status === "completed"; }).length;
+  document.getElementById("planProgressLabel").textContent = completed + " of " + allItems.length + " complete";
+  document.getElementById("planProgressBar").style.width = allItems.length ? Math.round(completed / allItems.length * 100) + "%" : "0%";
+  const items = activePlanFilter === "all" ? allItems : allItems.filter(function(item) { return item.status === activePlanFilter; });
+  if (!items.length) {
+    list.innerHTML = '<div class="panel empty-state empty-state-action"><strong>' +
+      (allItems.length ? "No actions match this filter" : "Your action plan is empty") +
+      '</strong><p>Turn a cited finding into a concrete, trackable next step.</p><button class="button button-dark" data-empty-action="plan">Add an action</button></div>';
+    list.querySelector("[data-empty-action=plan]").addEventListener("click", function() { openPlanItemModal(); });
+    return;
+  }
+  list.innerHTML = items.map(function(item) {
+    const evidence = state.knowledge.find(function(entry) { return entry.id === item.evidence_id; });
+    return '<article class="plan-item"><div class="plan-item-main"><div class="plan-item-heading"><span class="priority-dot is-' +
+      safe(item.priority) + '"></span><div><strong>' + safe(item.title) + '</strong><span>' + safe(item.skill || "General") +
+      '</span></div></div><p>' + safe(item.description || "No detail added.") + '</p>' +
+      (evidence ? '<div class="linked-evidence">Evidence: ' + safe(evidence.title) + '</div>' : "") +
+      '</div><div class="plan-item-controls"><select class="input compact-input" data-plan-status="' + item.id +
+      '"><option value="not_started"' + (item.status === "not_started" ? " selected" : "") +
+      '>Not started</option><option value="in_progress"' + (item.status === "in_progress" ? " selected" : "") +
+      '>In progress</option><option value="completed"' + (item.status === "completed" ? " selected" : "") +
+      '>Completed</option></select><span>' + (item.target_date ? "Due " + safe(formatDate(item.target_date + "T12:00:00Z")) : "No due date") +
+      '</span><button class="text-button" data-edit-plan="' + item.id + '">Edit <span>↗</span></button></div></article>';
+  }).join("");
+  list.querySelectorAll("[data-plan-status]").forEach(function(select) {
+    select.addEventListener("change", async function() {
+      const item = state.actionItems.find(function(entry) { return entry.id === select.dataset.planStatus; });
+      if (!item) return;
+      item.status = select.value;
+      item.completed_at = select.value === "completed" ? new Date().toISOString() : null;
+      item.updated_at = new Date().toISOString();
+      if (cloud && session) {
+        const result = await cloud.from("action_plan_items").update({
+          status: item.status, completed_at: item.completed_at, updated_at: item.updated_at
+        }).eq("id", item.id).eq("user_id", session.user.id);
+        if (result.error) { toast(result.error.message); await loadCloudState(); }
+      }
+      renderActionPlan(activePath());
+    });
+  });
+  list.querySelectorAll("[data-edit-plan]").forEach(function(button) {
+    button.addEventListener("click", function() {
+      openPlanItemModal(state.actionItems.find(function(item) { return item.id === button.dataset.editPlan; }));
+    });
+  });
+}
+
+function findingMap(analysis) {
+  return Object.fromEntries((analysis && analysis.findings || []).map(function(item) { return [item.skill.toLowerCase(), item]; }));
+}
+
+function renderProgress(path) {
+  const history = (state.analyses || []).filter(function(item) {
+    return item.status === "succeeded" && (!path || item.pathId === path.id);
+  });
+  document.getElementById("historyCount").textContent = history.length + " assessment" + (history.length === 1 ? "" : "s");
+  const historyBox = document.getElementById("analysisHistory");
+  historyBox.innerHTML = history.length ? history.map(function(item, index) {
+    return '<article class="history-item"><div><strong>' + safe(formatDate(item.completedAt || item.createdAt)) +
+      '</strong><span>' + safe(item.findings.length) + ' cited findings</span></div><p>' + safe(item.summary) +
+      '</p>' + (index === 0 ? '<span class="skill-badge good">Latest</span>' : "") + '</article>';
+  }).join("") : '<div class="empty-state">Run at least two cited assessments to compare your progress.</div>';
+  const comparison = document.getElementById("analysisComparison");
+  if (history.length < 2) {
+    comparison.innerHTML = '<div class="comparison-empty">A comparison will appear after your second assessment.</div>';
+  } else {
+    const current = findingMap(history[0]);
+    const previous = findingMap(history[1]);
+    const improved = Object.keys(current).filter(function(skill) {
+      const ranks = { missing: 0, uncertain: 1, partial: 2, strong: 3 };
+      return previous[skill] && ranks[current[skill].confidence] > ranks[previous[skill].confidence];
+    });
+    const newGaps = Object.keys(current).filter(function(skill) {
+      return !previous[skill] && ["missing", "uncertain"].includes(current[skill].confidence);
+    });
+    comparison.innerHTML = '<div class="comparison-cards"><div><strong>' + improved.length +
+      '</strong><span>improved findings</span><p>' + safe(improved.slice(0, 4).join(", ") || "No confidence changes yet") +
+      '</p></div><div><strong>' + newGaps.length + '</strong><span>new gaps detected</span><p>' +
+      safe(newGaps.slice(0, 4).join(", ") || "No new gaps") + '</p></div></div>';
+  }
+
+  const jobs = path && path.jobs || [];
+  const select = document.getElementById("guidanceJobSelect");
+  const selected = select.value;
+  select.innerHTML = jobs.length ? jobs.map(function(job) {
+    return '<option value="' + job.id + '">' + safe(job.title + (job.company ? " · " + job.company : "")) + '</option>';
+  }).join("") : '<option value="">Add a job first</option>';
+  if (jobs.some(function(job) { return job.id === selected; })) select.value = selected;
+  const latestGuidance = (state.cvGuidance || []).find(function(item) { return item.job_id === select.value; });
+  renderCvGuidance(latestGuidance);
+  renderSharedReports();
+}
+
+function renderCvGuidance(guidance) {
+  const box = document.getElementById("cvGuidanceResult");
+  if (!guidance) {
+    box.innerHTML = '<div class="empty-state">Select a job to receive truthful, job-specific CV recommendations. Masari never invents experience.</div>';
+    return;
+  }
+  box.innerHTML = '<p class="guidance-summary">' + safe(guidance.summary) + '</p><div class="guidance-list">' +
+    (guidance.suggestions || []).map(function(item) {
+      return '<article><div><strong>' + safe(item.section) + '</strong><span class="skill-badge ' +
+        (item.evidence_status === "supported" ? "good" : "warn") + '">' +
+        safe(item.evidence_status === "supported" ? "Supported" : "Needs your evidence") +
+        '</span></div><p>' + safe(item.issue) + '</p><p><b>Recommendation:</b> ' + safe(item.recommendation) + '</p></article>';
+    }).join("") + '</div>';
+}
+
+function renderSharedReports() {
+  const box = document.getElementById("sharedReportList");
+  const active = (state.sharedReports || []).filter(function(item) {
+    return !item.revoked_at && new Date(item.expires_at).getTime() > Date.now();
+  });
+  if (!active.length) { box.innerHTML = '<div class="empty-state">No active share links.</div>'; return; }
+  box.innerHTML = active.map(function(item) {
+    return '<div class="shared-report-row"><span>Expires ' + safe(new Date(item.expires_at).toLocaleDateString()) +
+      '</span><button class="text-button danger" data-revoke-share="' + item.id + '">Revoke</button></div>';
+  }).join("");
+  box.querySelectorAll("[data-revoke-share]").forEach(function(button) {
+    button.addEventListener("click", async function() {
+      const revokedAt = new Date().toISOString();
+      const result = await cloud.from("shared_reports").update({ revoked_at: revokedAt })
+        .eq("id", button.dataset.revokeShare).eq("user_id", session.user.id);
+      if (result.error) { toast(result.error.message); return; }
+      const item = state.sharedReports.find(function(entry) { return entry.id === button.dataset.revokeShare; });
+      if (item) item.revoked_at = revokedAt;
+      renderSharedReports();
+      toast("Share link revoked");
+    });
+  });
 }
 
 function renderProfile() {
@@ -751,6 +948,11 @@ function openJobModal(jobId) {
   document.getElementById("jobLocation").value = job ? job.location : "";
   document.getElementById("jobSource").value = job ? job.source : "";
   document.getElementById("jobDescription").value = job ? job.description : "";
+  document.getElementById("jobStatus").value = job ? job.status || "saved" : "saved";
+  document.getElementById("jobClosingDate").value = job ? job.closingDate || "" : "";
+  document.getElementById("jobAppliedAt").value = job && job.appliedAt ? String(job.appliedAt).slice(0, 10) : "";
+  document.getElementById("jobNotes").value = job ? job.notes || "" : "";
+  document.getElementById("jobImportStatus").textContent = "";
   document.getElementById("jobModalTitle").textContent = job ? "Edit job description" : "Add job to " + (path ? path.name : "this path");
   openModal("jobModal");
 }
@@ -764,6 +966,26 @@ function openKnowledgeModal(id) {
   document.getElementById("knowledgeEvidence").value = item ? item.evidence : "";
   document.getElementById("knowledgeModalTitle").textContent = item ? "Edit knowledge evidence" : "Add knowledge evidence";
   openModal("knowledgeModal");
+}
+
+function openPlanItemModal(item, defaults) {
+  const value = item || defaults || {};
+  document.getElementById("planItemId").value = item ? item.id : "";
+  document.getElementById("planAnalysisId").value = value.analysis_id || value.analysisId || "";
+  document.getElementById("planFindingIndex").value = value.finding_index ?? value.findingIndex ?? "";
+  document.getElementById("planItemTitle").value = value.title || "";
+  document.getElementById("planItemSkill").value = value.skill || "";
+  document.getElementById("planItemDescription").value = value.description || "";
+  document.getElementById("planItemPriority").value = value.priority || "medium";
+  document.getElementById("planItemTargetDate").value = value.target_date || "";
+  const evidenceSelect = document.getElementById("planEvidenceId");
+  evidenceSelect.innerHTML = '<option value="">No evidence linked</option>' + state.knowledge.map(function(evidence) {
+    return '<option value="' + evidence.id + '">' + safe(evidence.skill + " · " + evidence.title) + '</option>';
+  }).join("");
+  evidenceSelect.value = value.evidence_id || "";
+  document.getElementById("deletePlanItemButton").classList.toggle("hidden", !item);
+  document.getElementById("planItemModalTitle").textContent = item ? "Edit action" : "Add an action";
+  openModal("planItemModal");
 }
 
 function toast(message) {
@@ -947,6 +1169,14 @@ document.querySelectorAll(".modal-backdrop").forEach(function(backdrop) {
 });
 document.getElementById("editPathButton").addEventListener("click", function() { openPathModal(activePath()); });
 document.getElementById("exportButton").addEventListener("click", exportAccount);
+document.getElementById("addPlanItemButton").addEventListener("click", function() { openPlanItemModal(); });
+document.querySelectorAll("[data-plan-filter]").forEach(function(button) {
+  button.addEventListener("click", function() {
+    activePlanFilter = button.dataset.planFilter;
+    document.querySelectorAll("[data-plan-filter]").forEach(function(item) { item.classList.toggle("is-active", item === button); });
+    renderActionPlan(activePath());
+  });
+});
 document.getElementById("authButton").addEventListener("click", async function() {
   if (config.localPreview) {
     toast("Preview mode has no account session to sign out from");
@@ -1227,6 +1457,27 @@ document.getElementById("pathForm").addEventListener("submit", function(event) {
   state.activePathId = id; saveState(); closeModal("pathModal"); setView("paths"); toast("Job path saved");
 });
 
+document.getElementById("importJobButton").addEventListener("click", async function() {
+  const url = document.getElementById("jobSource").value.trim();
+  const status = document.getElementById("jobImportStatus");
+  if (!url) { status.textContent = "Enter a supported job URL first."; return; }
+  this.disabled = true;
+  status.textContent = "Importing…";
+  try {
+    const result = await cloud.functions.invoke("import-job", { body: { url: url } });
+    if (result.error || !result.data?.job) throw result.error || new Error(result.data?.error || "Import failed");
+    const job = result.data.job;
+    document.getElementById("jobTitle").value = job.title;
+    document.getElementById("jobCompany").value = job.company;
+    document.getElementById("jobLocation").value = job.location;
+    document.getElementById("jobDescription").value = job.description;
+    document.getElementById("jobSource").value = job.sourceUrl;
+    status.textContent = "Imported. Review before saving.";
+  } catch (error) {
+    status.textContent = await functionErrorMessage(error, "Import failed. Paste the description instead.");
+  } finally { this.disabled = false; }
+});
+
 document.getElementById("jobForm").addEventListener("submit", function(event) {
   event.preventDefault();
   const path = activePath();
@@ -1235,9 +1486,67 @@ document.getElementById("jobForm").addEventListener("submit", function(event) {
   const existing = path.jobs.find(function(job) { return job.id === id; });
   const jobCount = state.paths.reduce(function(total, item) { return total + item.jobs.length; }, 0);
   if (!existing && !canAdd("job_descriptions", jobCount)) { toast("Your private-beta job-description limit has been reached."); return; }
-  const record = { id: id, title: document.getElementById("jobTitle").value.trim(), company: document.getElementById("jobCompany").value.trim(), location: document.getElementById("jobLocation").value.trim(), source: document.getElementById("jobSource").value.trim(), description: document.getElementById("jobDescription").value.trim(), createdAt: new Date().toISOString() };
+  const record = {
+    id: id, title: document.getElementById("jobTitle").value.trim(),
+    company: document.getElementById("jobCompany").value.trim(),
+    location: document.getElementById("jobLocation").value.trim(),
+    source: document.getElementById("jobSource").value.trim(),
+    description: document.getElementById("jobDescription").value.trim(),
+    status: document.getElementById("jobStatus").value,
+    closingDate: document.getElementById("jobClosingDate").value,
+    appliedAt: document.getElementById("jobAppliedAt").value,
+    notes: document.getElementById("jobNotes").value.trim(),
+    createdAt: existing ? existing.createdAt : new Date().toISOString()
+  };
   if (existing) Object.assign(existing, record); else path.jobs.unshift(record);
   saveState(); closeModal("jobModal"); render(); toast("Job description added to this path");
+});
+
+document.getElementById("planItemForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const id = document.getElementById("planItemId").value || crypto.randomUUID();
+  const existing = state.actionItems.find(function(item) { return item.id === id; });
+  const findingValue = document.getElementById("planFindingIndex").value;
+  const evidenceId = document.getElementById("planEvidenceId").value || null;
+  const row = {
+    id: id,
+    user_id: session && session.user.id,
+    path_id: activePath() && activePath().id || null,
+    analysis_id: document.getElementById("planAnalysisId").value || null,
+    finding_index: findingValue === "" ? null : Number(findingValue),
+    evidence_id: evidenceId,
+    title: document.getElementById("planItemTitle").value.trim(),
+    skill: document.getElementById("planItemSkill").value.trim(),
+    description: document.getElementById("planItemDescription").value.trim(),
+    status: existing ? existing.status : "not_started",
+    priority: document.getElementById("planItemPriority").value,
+    target_date: document.getElementById("planItemTargetDate").value || null,
+    completed_at: existing && existing.completed_at || null,
+    updated_at: new Date().toISOString()
+  };
+  try {
+    if (cloud && session) {
+      const result = await cloud.from("action_plan_items").upsert(row).select().single();
+      if (result.error) throw result.error;
+      Object.assign(row, result.data);
+      if (row.analysis_id && row.finding_index !== null && evidenceId) {
+        const linkResult = await cloud.from("analysis_evidence_links").upsert({
+          user_id: session.user.id,
+          analysis_id: row.analysis_id,
+          finding_index: row.finding_index,
+          evidence_id: evidenceId
+        }, { onConflict: "user_id,analysis_id,finding_index,evidence_id" }).select().single();
+        if (linkResult.error) throw linkResult.error;
+        state.evidenceLinks = (state.evidenceLinks || []).filter(function(link) { return link.id !== linkResult.data.id; });
+        state.evidenceLinks.push(linkResult.data);
+      }
+    }
+    state.actionItems = state.actionItems.filter(function(item) { return item.id !== id; });
+    state.actionItems.unshift(row);
+    closeModal("planItemModal");
+    setView("plan");
+    toast("Action saved");
+  } catch (error) { toast(error.message || "Action could not be saved"); }
 });
 
 document.getElementById("knowledgeForm").addEventListener("submit", function(event) {
@@ -1269,6 +1578,103 @@ document.getElementById("saveCvButton").addEventListener("click", function() {
   state.cv.text = document.getElementById("cvText").value.trim();
   state.cv.uploadedAt = state.cv.uploadedAt || new Date().toISOString();
   saveState(); render(); document.getElementById("cvSaveMessage").textContent = "CV evidence saved"; toast("CV evidence saved");
+});
+
+document.getElementById("guidanceJobSelect").addEventListener("change", function() {
+  const jobId = this.value;
+  renderCvGuidance((state.cvGuidance || []).find(function(item) { return item.job_id === jobId; }));
+});
+document.getElementById("deletePlanItemButton").addEventListener("click", async function() {
+  const id = document.getElementById("planItemId").value;
+  if (!id) return;
+  try {
+    if (cloud && session) {
+      const result = await cloud.from("action_plan_items").delete().eq("id", id).eq("user_id", session.user.id);
+      if (result.error) throw result.error;
+    }
+    state.actionItems = state.actionItems.filter(function(item) { return item.id !== id; });
+    closeModal("planItemModal");
+    renderActionPlan(activePath());
+    toast("Action deleted");
+  } catch (error) { toast(error.message || "Action could not be deleted"); }
+});
+document.getElementById("generateCvGuidanceButton").addEventListener("click", async function() {
+  const jobId = document.getElementById("guidanceJobSelect").value;
+  if (!jobId) { toast("Add and select a job first"); return; }
+  if (!state.cv.text) { toast("Add your CV before requesting guidance"); return; }
+  this.disabled = true;
+  this.textContent = "Generating…";
+  try {
+    await saveQueue;
+    const result = await cloud.functions.invoke("cv-guidance", { body: { jobId: jobId } });
+    if (result.error || !result.data?.guidance) throw result.error || new Error("Guidance failed");
+    state.cvGuidance.unshift(result.data.guidance);
+    renderCvGuidance(result.data.guidance);
+    toast("Job-specific CV guidance saved");
+  } catch (error) {
+    toast(await functionErrorMessage(error, "CV guidance could not be created"));
+  } finally {
+    this.disabled = false;
+    this.textContent = "Generate truthful guidance";
+  }
+});
+
+function reportPayload() {
+  const path = activePath();
+  const analysis = path && (state.analyses || []).find(function(item) {
+    return item.pathId === path.id && item.status === "succeeded";
+  });
+  return {
+    generated_at: new Date().toISOString(),
+    path: path ? { name: path.name, target: path.target, description: path.description } : null,
+    analysis: analysis ? { summary: analysis.summary, findings: analysis.findings, completed_at: analysis.completedAt } : null,
+    actions: (state.actionItems || []).filter(function(item) { return path && item.path_id === path.id; }).map(function(item) {
+      return {
+        title: item.title, skill: item.skill, description: item.description,
+        status: item.status, priority: item.priority, target_date: item.target_date
+      };
+    }),
+    privacy_note: "CV text and private evidence details are excluded."
+  };
+}
+
+document.getElementById("downloadReportButton").addEventListener("click", function() {
+  downloadJson(reportPayload(), "masari-progress-report.json");
+});
+document.getElementById("printReportButton").addEventListener("click", function() { window.print(); });
+document.getElementById("createShareLinkButton").addEventListener("click", async function() {
+  const path = activePath();
+  const analysis = path && (state.analyses || []).find(function(item) {
+    return item.pathId === path.id && item.status === "succeeded";
+  });
+  if (!path || !analysis) { toast("Run a cited analysis before sharing a report"); return; }
+  this.disabled = true;
+  try {
+    const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
+    const token = Array.from(tokenBytes).map(function(byte) { return byte.toString(16).padStart(2, "0"); }).join("");
+    const tokenHash = await contentHash(token);
+    const row = {
+      user_id: session.user.id,
+      path_id: path.id,
+      analysis_id: analysis.id,
+      token_hash: tokenHash,
+      expires_at: new Date(Date.now() + 7 * 86400000).toISOString()
+    };
+    const result = await cloud.from("shared_reports").insert(row).select().single();
+    if (result.error) throw result.error;
+    state.sharedReports.unshift(result.data);
+    const shareUrl = window.location.origin + "/report.html#" + token;
+    renderSharedReports();
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast("Private report link copied. It expires in 7 days.");
+    } catch (_clipboardError) {
+      window.prompt("Copy this private report link. It expires in 7 days.", shareUrl);
+      toast("Private report link created. It expires in 7 days.");
+    }
+  } catch (error) {
+    toast(error.message || "Share link could not be created");
+  } finally { this.disabled = false; }
 });
 
 document.getElementById("profileForm").addEventListener("submit", async function(event) {

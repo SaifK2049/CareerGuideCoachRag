@@ -23,6 +23,12 @@ const [
   betaTerms,
   waitlistMigration,
   waitlistFunction,
+  productMigration,
+  cvGuidanceFunction,
+  importJobFunction,
+  sharedReportFunction,
+  reportPage,
+  reportScript,
 ] = await Promise.all([
   readFile(resolve(root, "index.html"), "utf8"),
   readFile(resolve(root, "app.js"), "utf8"),
@@ -44,6 +50,12 @@ const [
   readFile(resolve(root, "beta-terms.html"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260718223523_public_waitlist.sql"), "utf8"),
   readFile(resolve(root, "supabase/functions/join-waitlist/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/migrations/20260718225738_product_workflows.sql"), "utf8"),
+  readFile(resolve(root, "supabase/functions/cv-guidance/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/import-job/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/shared-report/index.ts"), "utf8"),
+  readFile(resolve(root, "report.html"), "utf8"),
+  readFile(resolve(root, "report.js"), "utf8"),
 ]);
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
@@ -69,6 +81,9 @@ if (!ids.includes("analysisStatus") || !app.includes("data-finding-feedback") ||
 for (const surface of ["setupChecklist", "nextActionPanel", "readinessExplainer", "latestAnalysisStat"]) {
   if (!ids.includes(surface)) throw new Error(`Guided dashboard surface is missing: ${surface}`);
 }
+for (const surface of ["planView", "progressView", "actionPlanList", "analysisHistory", "cvGuidanceResult", "sharedReportList"]) {
+  if (!ids.includes(surface)) throw new Error(`Product workflow surface is missing: ${surface}`);
+}
 if (!app.includes("renderSetupChecklist") || !app.includes("data-empty-action")) {
   throw new Error("Guided checklist or actionable empty states are missing");
 }
@@ -81,6 +96,13 @@ if (!/\[functions\.stripe-webhook\][\s\S]*?verify_jwt = false/.test(supabaseConf
 for (const functionName of ["analyze-career", "create-checkout-session", "create-portal-session", "delete-account", "export-account"]) {
   const pattern = new RegExp(`\\[functions\\.${functionName}\\][\\s\\S]*?verify_jwt = true`);
   if (!pattern.test(supabaseConfig)) throw new Error(`${functionName} must require a user JWT`);
+}
+for (const functionName of ["cv-guidance", "import-job"]) {
+  const pattern = new RegExp(`\\[functions\\.${functionName}\\][\\s\\S]*?verify_jwt = true`);
+  if (!pattern.test(supabaseConfig)) throw new Error(`${functionName} must require a user JWT`);
+}
+if (!/\[functions\.shared-report\][\s\S]*?verify_jwt = false/.test(supabaseConfig)) {
+  throw new Error("Shared reports must perform token authentication inside the function");
 }
 for (const table of ["account_subscriptions", "feature_usage_monthly", "stripe_events"]) {
   if (!billingMigration.includes(`alter table public.${table} enable row level security`)) {
@@ -126,6 +148,8 @@ for (const [name, source] of [
   ["create-portal-session", portalFunction],
   ["delete-account", deleteFunction],
   ["export-account", exportFunction],
+  ["cv-guidance", cvGuidanceFunction],
+  ["import-job", importJobFunction],
 ]) {
   if (!source.includes("consumeRateLimit") || !source.includes("rateLimitResponse")) {
     throw new Error(`${name} is not connected to server-side rate limiting`);
@@ -137,6 +161,9 @@ for (const [name, source] of [
   ["create-portal-session", portalFunction],
   ["delete-account", deleteFunction],
   ["export-account", exportFunction],
+  ["cv-guidance", cvGuidanceFunction],
+  ["import-job", importJobFunction],
+  ["shared-report", sharedReportFunction],
 ]) {
   if (!source.includes("handleCors") || !source.includes("../_shared/http.ts")) {
     throw new Error(`${name} is not using the shared origin allowlist`);
@@ -161,6 +188,40 @@ if (
   !waitlistFunction.includes('Deno.env.get("TURNSTILE_SECRET_KEY")')
 ) {
   throw new Error("Waitlist storage must remain private and Turnstile-verified");
+}
+for (const table of ["action_plan_items", "analysis_evidence_links", "cv_guidance", "shared_reports"]) {
+  if (!productMigration.includes(`alter table public.${table} enable row level security`)) {
+    throw new Error(`Product workflow table does not enable RLS: ${table}`);
+  }
+}
+if (
+  !cvGuidanceFunction.includes("Never invent experience") ||
+  !cvGuidanceFunction.includes("json_schema") ||
+  !cvGuidanceFunction.includes("AI_NOT_CONFIGURED") ||
+  !importJobFunction.includes("approvedHosts") ||
+  !importJobFunction.includes('redirect: "error"') ||
+  !importJobFunction.includes("AI_NOT_CONFIGURED") ||
+  !sharedReportFunction.includes("token_hash") ||
+  !sharedReportFunction.includes("sha256(rawToken)") ||
+  !reportPage.includes("report.js") ||
+  !reportScript.includes('functions.invoke("shared-report"') ||
+  !reportScript.includes('history.replaceState({}, "", window.location.pathname)')
+) {
+  throw new Error("CV guidance, safe job import, or privacy-safe report sharing is incomplete");
+}
+for (const indexName of [
+  "action_plan_items_path_owner_idx",
+  "action_plan_items_analysis_owner_idx",
+  "action_plan_items_evidence_owner_idx",
+  "cv_guidance_path_owner_idx",
+  "cv_guidance_job_owner_idx",
+  "shared_reports_path_owner_idx",
+  "shared_reports_analysis_owner_idx",
+]) {
+  if (!productMigration.includes(indexName)) throw new Error(`Product workflow foreign key index is missing: ${indexName}`);
+}
+if (!productMigration.includes("expires_at <= created_at + interval '30 days'")) {
+  throw new Error("Shared report expiry must be bounded by the database");
 }
 if (!app.includes('cloud.functions.invoke("export-account"') || !app.includes('cloud.from("beta_feedback").insert')) {
   throw new Error("Account export or private-beta feedback is not connected");

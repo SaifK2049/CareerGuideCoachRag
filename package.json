@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node --check app.js && node --check scripts/build.mjs && node scripts/verify-static.mjs",
+    "check": "node --check app.js && node --check report.js && node --check scripts/build.mjs && node scripts/verify-static.mjs",
     "monitor:production": "node scripts/production-smoke.mjs",
     "test:integration": "node scripts/integration-test.mjs"
   },

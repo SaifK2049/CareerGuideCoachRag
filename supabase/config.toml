@@ -479,3 +479,21 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/join-waitlist/deno.json"
 entrypoint = "./functions/join-waitlist/index.ts"
+
+[functions.cv-guidance]
+enabled = true
+verify_jwt = true
+import_map = "./functions/cv-guidance/deno.json"
+entrypoint = "./functions/cv-guidance/index.ts"
+
+[functions.import-job]
+enabled = true
+verify_jwt = true
+import_map = "./functions/import-job/deno.json"
+entrypoint = "./functions/import-job/index.ts"
+
+[functions.shared-report]
+enabled = true
+verify_jwt = false
+import_map = "./functions/shared-report/deno.json"
+entrypoint = "./functions/shared-report/index.ts"

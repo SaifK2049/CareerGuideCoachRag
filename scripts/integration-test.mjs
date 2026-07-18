@@ -129,6 +129,7 @@ try {
   assert.deepEqual(bobCannotReadAliceProfile.data, []);
 
   const pathIds = [];
+  let firstJobId = "";
   for (let index = 1; index <= 3; index += 1) {
     const id = crypto.randomUUID();
     pathIds.push(id);
@@ -176,15 +177,19 @@ try {
   assert.equal(crossTenantJob.response.ok, false, "cross-tenant path references must be rejected");
 
   for (let index = 1; index <= 20; index += 1) {
+    const jobId = crypto.randomUUID();
+    if (index === 1) firstJobId = jobId;
     const job = await rest("job_descriptions", alice, {
       method: "POST",
       body: {
-        id: crypto.randomUUID(),
+        id: jobId,
         user_id: alice.id,
         path_id: pathIds[0],
         title: `Platform role ${index}`,
         description: `Unique beta platform description ${index}`,
         content_hash: `beta-integration-hash-${index}`,
+        application_status: index === 1 ? "applied" : "saved",
+        applied_at: index === 1 ? new Date().toISOString() : null,
       },
     });
     assert.equal(job.response.status, 201, JSON.stringify(job.data));
@@ -215,11 +220,14 @@ try {
   });
   assert.equal(duplicateJob.response.ok, false, "duplicate job content hashes must be rejected");
 
+  let firstEvidenceId = "";
   for (let index = 1; index <= 50; index += 1) {
+    const evidenceId = crypto.randomUUID();
+    if (index === 1) firstEvidenceId = evidenceId;
     const evidence = await rest("knowledge_evidence", alice, {
       method: "POST",
       body: {
-        id: crypto.randomUUID(),
+        id: evidenceId,
         user_id: alice.id,
         skill: `Skill ${index}`,
         title: `Evidence ${index}`,
@@ -377,6 +385,107 @@ try {
   });
   assert.equal(bobCannotWriteAliceFeedback.response.status, 403);
 
+  const actionId = crypto.randomUUID();
+  const action = await rest("action_plan_items", alice, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: {
+      id: actionId,
+      user_id: alice.id,
+      path_id: pathIds[0],
+      analysis_id: completed.data.id,
+      finding_index: 0,
+      evidence_id: firstEvidenceId,
+      title: "Build Kubernetes deployment evidence",
+      skill: "Kubernetes",
+      description: "Deploy a small service and document the operational decisions.",
+      status: "in_progress",
+      priority: "high",
+    },
+  });
+  assert.equal(action.response.status, 201, JSON.stringify(action.data));
+  const evidenceLink = await rest("analysis_evidence_links", alice, {
+    method: "POST",
+    body: {
+      user_id: alice.id,
+      analysis_id: completed.data.id,
+      finding_index: 0,
+      evidence_id: firstEvidenceId,
+    },
+  });
+  assert.equal(evidenceLink.response.status, 201, JSON.stringify(evidenceLink.data));
+  const bobCannotReadActions = await rest(`action_plan_items?id=eq.${actionId}&select=*`, bob);
+  assert.deepEqual(bobCannotReadActions.data, []);
+  const bobCannotLinkAliceEvidence = await rest("analysis_evidence_links", bob, {
+    method: "POST",
+    body: {
+      user_id: bob.id,
+      analysis_id: completed.data.id,
+      finding_index: 0,
+      evidence_id: firstEvidenceId,
+    },
+  });
+  assert.equal(bobCannotLinkAliceEvidence.response.status, 403);
+
+  const directCvGuidanceInsert = await rest("cv_guidance", alice, {
+    method: "POST",
+    body: {
+      user_id: alice.id,
+      path_id: pathIds[0],
+      job_id: firstJobId,
+      summary: "Browser clients must not create AI guidance records.",
+      suggestions: [],
+    },
+  });
+  assert.equal(directCvGuidanceInsert.response.ok, false);
+  const savedGuidance = await serviceRest("cv_guidance", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: {
+      user_id: alice.id,
+      path_id: pathIds[0],
+      job_id: firstJobId,
+      summary: "Emphasize supported Kubernetes evidence.",
+      suggestions: [{
+        section: "Experience",
+        issue: "The evidence is not prominent.",
+        recommendation: "Move the supported deployment example closer to the top.",
+        evidence_status: "supported",
+      }],
+      model: "integration-model",
+    },
+  });
+  assert.equal(savedGuidance.response.status, 201, JSON.stringify(savedGuidance.data));
+  const bobCannotReadGuidance = await rest(`cv_guidance?user_id=eq.${alice.id}&select=*`, bob);
+  assert.deepEqual(bobCannotReadGuidance.data, []);
+
+  const rawShareToken = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const shareHashBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawShareToken));
+  const shareHash = Array.from(new Uint8Array(shareHashBytes))
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const sharedReport = await rest("shared_reports", alice, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: {
+      user_id: alice.id,
+      path_id: pathIds[0],
+      analysis_id: completed.data.id,
+      token_hash: shareHash,
+      expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
+    },
+  });
+  assert.equal(sharedReport.response.status, 201, JSON.stringify(sharedReport.data));
+  const bobCannotReadShareSettings = await rest(`shared_reports?user_id=eq.${alice.id}&select=*`, bob);
+  assert.deepEqual(bobCannotReadShareSettings.data, []);
+  const publicReport = await request("/functions/v1/shared-report", {
+    method: "POST",
+    body: { token: rawShareToken },
+  });
+  assert.equal(publicReport.response.status, 200, JSON.stringify(publicReport.data));
+  assert.equal(publicReport.data.report.actions.length, 1);
+  assert.equal(JSON.stringify(publicReport.data).includes("Alice private CV evidence"), false);
+
   const replayed = await serviceRest("rpc/reserve_career_analysis", {
     method: "POST",
     body: {
@@ -483,6 +592,20 @@ try {
   });
   assert.equal(unconfiguredAnalysis.response.status, 503, JSON.stringify(unconfiguredAnalysis.data));
   assert.equal(unconfiguredAnalysis.data.code, "AI_NOT_CONFIGURED");
+  const unconfiguredGuidance = await request("/functions/v1/cv-guidance", {
+    token: alice.token,
+    method: "POST",
+    body: { jobId: firstJobId },
+  });
+  assert.equal(unconfiguredGuidance.response.status, 503, JSON.stringify(unconfiguredGuidance.data));
+  assert.equal(unconfiguredGuidance.data.code, "AI_NOT_CONFIGURED");
+  const unconfiguredImport = await request("/functions/v1/import-job", {
+    token: alice.token,
+    method: "POST",
+    body: { url: "https://jobs.lever.co/example/example-role" },
+  });
+  assert.equal(unconfiguredImport.response.status, 503, JSON.stringify(unconfiguredImport.data));
+  assert.equal(unconfiguredImport.data.code, "AI_NOT_CONFIGURED");
 
   for (let index = 0; index < 5; index += 1) {
     const checkoutAttempt = await request("/functions/v1/create-checkout-session", {
@@ -510,6 +633,11 @@ try {
   assert.equal(exportResult.data.career_analyses.length, 10);
   assert.equal(exportResult.data.beta_feedback.length, 1);
   assert.equal(exportResult.data.analysis_finding_feedback.length, 1);
+  assert.equal(exportResult.data.action_plan_items.length, 1);
+  assert.equal(exportResult.data.analysis_evidence_links.length, 1);
+  assert.equal(exportResult.data.cv_guidance.length, 1);
+  assert.equal(exportResult.data.shared_reports.length, 1);
+  assert.equal("token_hash" in exportResult.data.shared_reports[0], false);
   assert.equal(exportResult.data.stored_cv_files[0].name, "current-cv.pdf");
 
   const newerStripeEvent = await serviceRest("rpc/apply_stripe_subscription_event", {
