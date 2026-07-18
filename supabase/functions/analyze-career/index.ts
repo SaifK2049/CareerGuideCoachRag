@@ -30,13 +30,17 @@ class AnalysisError extends Error {
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const confidenceValues = new Set(["strong", "partial", "missing", "uncertain"]);
 
+function openAiApiKey() {
+  return Deno.env.get("OPENAI_API_KEY") || Deno.env.get("OPENAI_AI_KEY") || "";
+}
+
 async function openAi(path: string, body: unknown, timeoutMs: number) {
   let response: Response;
   try {
     response = await fetch(`https://api.openai.com/v1/${path}`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${Deno.env.get("OPENAI_API_KEY")}`,
+        Authorization: `Bearer ${openAiApiKey()}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -201,7 +205,7 @@ Deno.serve(async (request) => {
       });
     }
 
-    if (!Deno.env.get("OPENAI_API_KEY")) {
+    if (!openAiApiKey()) {
       throw new AnalysisError("AI_NOT_CONFIGURED", 503, "AI analysis is not configured yet.");
     }
 
