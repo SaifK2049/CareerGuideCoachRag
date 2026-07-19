@@ -232,6 +232,14 @@ if (!deleteFunction.includes("recentlyIssued") || !app.includes("deleteAccountFo
 if (!app.includes('cloud.from("document_chunks").delete()') || !app.includes('cloud.from("career_analyses").delete()')) {
   throw new Error("Clearing a workspace must remove retained RAG chunks and saved analyses");
 }
+if (
+  !app.includes("ensureStarterActionAfterCv") ||
+  !app.includes("CV saved and your first action plan was created") ||
+  !app.includes('.eq("user_id", session.user.id).eq("path_id", path.id).limit(1)') ||
+  (app.match(/await ensureStarterActionAfterCv\(\)/g) || []).length < 3
+) {
+  throw new Error("Saving a first CV must create one idempotent starter action for the active path");
+}
 if (!privacyNotice.includes("AI processing") || !betaTerms.includes("Private Beta Terms")) {
   throw new Error("Private-beta privacy and terms pages are missing");
 }

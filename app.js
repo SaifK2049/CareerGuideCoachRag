@@ -126,6 +126,7 @@ let activeView = "overview";
 let activePlanFilter = "all";
 let analysisTimers = [];
 let analysisUi = {};
+let cvStarterActionPromise = null;
 
 function loadState() {
   if (!config.localPreview) return emptyState();
@@ -988,6 +989,55 @@ function openPlanItemModal(item, defaults) {
   openModal("planItemModal");
 }
 
+async function ensureStarterActionAfterCv() {
+  const path = activePath();
+  if (!path || !state.cv.text.trim()) return false;
+  if ((state.actionItems || []).some(function(item) { return item.path_id === path.id; })) return false;
+  if (cvStarterActionPromise) return cvStarterActionPromise;
+  cvStarterActionPromise = (async function() {
+    if (cloud && session) {
+      const existingResult = await cloud.from("action_plan_items").select("id")
+        .eq("user_id", session.user.id).eq("path_id", path.id).limit(1);
+      if (existingResult.error) throw existingResult.error;
+      if ((existingResult.data || []).length) return false;
+    }
+    const hasJobs = Boolean(path.jobs && path.jobs.length);
+    const target = path.target || path.name || "your target role";
+    const row = {
+      id: crypto.randomUUID(),
+      user_id: session && session.user.id,
+      path_id: path.id,
+      analysis_id: null,
+      finding_index: null,
+      evidence_id: null,
+      title: "Review your CV against " + target,
+      skill: "Career positioning",
+      description: hasJobs
+        ? "Run a cited analysis for this path, then turn the highest-value evidence gap into your next concrete task."
+        : "Add one relevant job description for " + target + ", then run a cited analysis to identify your highest-value evidence gap.",
+      status: "not_started",
+      priority: "high",
+      target_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+      completed_at: null,
+      updated_at: new Date().toISOString()
+    };
+    if (cloud && session) {
+      const insertResult = await cloud.from("action_plan_items").insert(row).select().single();
+      if (insertResult.error) throw insertResult.error;
+      Object.assign(row, insertResult.data);
+    }
+    state.actionItems = state.actionItems || [];
+    state.actionItems.unshift(row);
+    if (config.localPreview) localStorage.setItem(cacheKey(), JSON.stringify(state));
+    return true;
+  })();
+  try {
+    return await cvStarterActionPromise;
+  } finally {
+    cvStarterActionPromise = null;
+  }
+}
+
 function toast(message) {
   const box = document.getElementById("toast");
   box.textContent = message;
@@ -1363,11 +1413,16 @@ document.getElementById("onboardingForm").addEventListener("submit", async funct
       if (upload.error) throw upload.error;
     }
     await saveState();
+    let actionCreated = false;
+    let actionWarning = "";
+    try { actionCreated = await ensureStarterActionAfterCv(); }
+    catch (actionError) { actionWarning = actionError.message || "Workspace created, but the starter action could not be saved"; }
     const userUpdate = await cloud.auth.updateUser({ data: { display_name: state.profile.displayName } });
     if (userUpdate.error) throw userUpdate.error;
     message.textContent = "";
     showSurface("app");
     render();
+    toast(actionWarning || (actionCreated ? "Workspace ready and your first action plan was created" : "Your workspace is ready"));
   } catch (error) { message.textContent = error.message || "Setup could not be completed."; }
 });
 ["upgradeButton", "membershipActionButton"].forEach(function(id) {
@@ -1570,14 +1625,33 @@ document.getElementById("cvFile").addEventListener("change", async function(even
       const upload = await cloud.storage.from("private-cvs").upload(session.user.id + "/current-cv.pdf", file, { upsert: true, contentType: "application/pdf" });
       if (upload.error) throw upload.error;
     }
-    saveState(); render(); toast("CV extracted and saved privately");
+    await saveState();
+    let actionCreated = false;
+    let actionWarning = "";
+    try { actionCreated = await ensureStarterActionAfterCv(); }
+    catch (actionError) { actionWarning = actionError.message || "CV saved, but the starter action could not be created"; }
+    render();
+    toast(actionWarning || (actionCreated ? "CV saved and your first action plan was created" : "CV extracted and saved privately"));
   } catch (error) { document.getElementById("cvStatus").textContent = "Could not extract PDF"; toast(error.message || "PDF extraction failed"); }
 });
 
-document.getElementById("saveCvButton").addEventListener("click", function() {
-  state.cv.text = document.getElementById("cvText").value.trim();
-  state.cv.uploadedAt = state.cv.uploadedAt || new Date().toISOString();
-  saveState(); render(); document.getElementById("cvSaveMessage").textContent = "CV evidence saved"; toast("CV evidence saved");
+document.getElementById("saveCvButton").addEventListener("click", async function() {
+  this.disabled = true;
+  try {
+    state.cv.text = document.getElementById("cvText").value.trim();
+    state.cv.uploadedAt = state.cv.uploadedAt || new Date().toISOString();
+    await saveState();
+    const actionCreated = await ensureStarterActionAfterCv();
+    render();
+    document.getElementById("cvSaveMessage").textContent = actionCreated
+      ? "CV saved · first action plan created"
+      : "CV evidence saved";
+    toast(actionCreated ? "CV saved and your first action plan was created" : "CV evidence saved");
+  } catch (error) {
+    toast(error.message || "CV evidence could not be saved");
+  } finally {
+    this.disabled = false;
+  }
 });
 
 document.getElementById("guidanceJobSelect").addEventListener("change", function() {
