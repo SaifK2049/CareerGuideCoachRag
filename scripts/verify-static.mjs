@@ -240,6 +240,15 @@ if (
 ) {
   throw new Error("Saving a first CV must create one idempotent starter action for the active path");
 }
+if (
+  !app.includes("ensureActionAfterAnalysis") ||
+  !app.includes("ensureLatestAnalysisAction") ||
+  !app.includes('.eq("user_id", session.user.id).eq("analysis_id", analysis.id).limit(1)') ||
+  !app.includes("Cited analysis saved and 1 action was added to your plan") ||
+  !app.includes("finding_index: prioritized.index")
+) {
+  throw new Error("A successful cited analysis must create one deduplicated action from its highest-priority finding");
+}
 if (!privacyNotice.includes("AI processing") || !betaTerms.includes("Private Beta Terms")) {
   throw new Error("Private-beta privacy and terms pages are missing");
 }

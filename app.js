@@ -127,6 +127,7 @@ let activePlanFilter = "all";
 let analysisTimers = [];
 let analysisUi = {};
 let cvStarterActionPromise = null;
+const analysisActionPromises = new Map();
 
 function loadState() {
   if (!config.localPreview) return emptyState();
@@ -1038,6 +1039,71 @@ async function ensureStarterActionAfterCv() {
   }
 }
 
+async function ensureActionAfterAnalysis(analysis, path) {
+  if (!analysis || !analysis.id || !path || !(analysis.findings || []).length) return false;
+  if ((state.actionItems || []).some(function(item) { return item.analysis_id === analysis.id; })) return false;
+  if (analysisActionPromises.has(analysis.id)) return analysisActionPromises.get(analysis.id);
+  const promise = (async function() {
+    if (cloud && session) {
+      const existingResult = await cloud.from("action_plan_items").select("id")
+        .eq("user_id", session.user.id).eq("analysis_id", analysis.id).limit(1);
+      if (existingResult.error) throw existingResult.error;
+      if ((existingResult.data || []).length) return false;
+    }
+    const confidenceRank = { missing: 0, uncertain: 1, partial: 2, strong: 3 };
+    const prioritized = analysis.findings.map(function(finding, index) {
+      return { finding: finding, index: index };
+    }).sort(function(left, right) {
+      return (confidenceRank[left.finding.confidence] ?? 4) - (confidenceRank[right.finding.confidence] ?? 4);
+    })[0];
+    const finding = prioritized.finding;
+    const skill = String(finding.skill || "your highest-priority gap").slice(0, 160);
+    const needsNewEvidence = finding.confidence === "missing" || finding.confidence === "uncertain";
+    const actionInstruction = needsNewEvidence
+      ? "Create or document one concrete example that demonstrates " + skill + ". Add the result as evidence, then rerun the cited analysis."
+      : "Strengthen your existing " + skill + " evidence with the scope, decisions, outcome, and measurable impact, then rerun the cited analysis.";
+    const row = {
+      id: crypto.randomUUID(),
+      user_id: session && session.user.id,
+      path_id: path.id,
+      analysis_id: analysis.id,
+      finding_index: prioritized.index,
+      evidence_id: null,
+      title: ((needsNewEvidence ? "Build evidence for " : "Strengthen evidence for ") + skill).slice(0, 240),
+      skill: skill,
+      description: (actionInstruction + " Finding: " + (finding.explanation || "")).slice(0, 10000),
+      status: "not_started",
+      priority: needsNewEvidence ? "high" : "medium",
+      target_date: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
+      completed_at: null,
+      updated_at: new Date().toISOString()
+    };
+    if (cloud && session) {
+      const insertResult = await cloud.from("action_plan_items").insert(row).select().single();
+      if (insertResult.error) throw insertResult.error;
+      Object.assign(row, insertResult.data);
+    }
+    state.actionItems = state.actionItems || [];
+    state.actionItems.unshift(row);
+    if (config.localPreview) localStorage.setItem(cacheKey(), JSON.stringify(state));
+    return true;
+  })();
+  analysisActionPromises.set(analysis.id, promise);
+  try {
+    return await promise;
+  } finally {
+    analysisActionPromises.delete(analysis.id);
+  }
+}
+
+async function ensureLatestAnalysisAction() {
+  const analysis = (state.analyses || []).find(function(item) { return item.status === "succeeded"; });
+  if (!analysis || (state.actionItems || []).some(function(item) { return item.analysis_id === analysis.id; })) return false;
+  const path = state.paths.find(function(item) { return item.id === analysis.pathId; });
+  if (!path) return false;
+  return ensureActionAfterAnalysis(analysis, path);
+}
+
 function toast(message) {
   const box = document.getElementById("toast");
   box.textContent = message;
@@ -1491,9 +1557,18 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
     state.analyses.unshift(analysis);
     delete pendingAnalysisRequests[path.id];
     clearAnalysisTimers();
-    setAnalysisStatus(path.id, "completed", "Your cited findings were saved privately.", requestId);
+    let actionCreated = false;
+    let actionWarning = "";
+    try { actionCreated = await ensureActionAfterAnalysis(analysis, path); }
+    catch (actionError) { actionWarning = actionError.message || "Analysis saved, but its action could not be created"; }
+    setAnalysisStatus(path.id, "completed", actionCreated
+      ? "Your cited findings were saved and one action was added to your plan."
+      : "Your cited findings were saved privately.", requestId);
     renderAnalysisResult(path);
-    toast(result.data.replayed ? "Saved analysis restored" : "Cited analysis saved privately");
+    renderActionPlan(path);
+    toast(actionWarning || (actionCreated
+      ? "Cited analysis saved and 1 action was added to your plan"
+      : result.data.replayed ? "Saved analysis restored" : "Cited analysis saved privately"));
   } catch (error) {
     clearAnalysisTimers();
     const message = await functionErrorMessage(error, "Analysis failed");
@@ -1910,9 +1985,11 @@ async function initializeCloud() {
           localStorage.removeItem(cacheKey());
           await loadCloudState();
           cloudReady = true;
+          const restoredAction = await ensureLatestAnalysisAction().catch(function() { return false; });
           document.querySelector(".storage-status span:last-child").textContent = "Encrypted cloud workspace";
           document.getElementById("saveState").textContent = "Saved privately";
           showSignedInSurface();
+          if (restoredAction) toast("Added 1 action from your latest cited analysis");
           if (authEvent === "PASSWORD_RECOVERY") openPasswordSetup("recovery");
           else if (passwordSetupMode === "invite") openPasswordSetup("invite");
         } else {
@@ -1931,8 +2008,10 @@ async function initializeCloud() {
   if (session) {
     await loadCloudState();
     cloudReady = true;
+    const restoredAction = await ensureLatestAnalysisAction().catch(function() { return false; });
     document.getElementById("saveState").textContent = "Saved privately";
     showSignedInSurface();
+    if (restoredAction) toast("Added 1 action from your latest cited analysis");
     if (passwordSetupMode === "invite") openPasswordSetup("invite");
   } else {
     showSurface("auth");
