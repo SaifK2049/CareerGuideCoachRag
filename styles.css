@@ -393,6 +393,7 @@ h1{font-size:26px}h2{font-size:27px}h3{font-size:17px}
 .membership-plan-title{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-bottom:20px}
 .membership-plan-title h4{font-family:"Space Grotesk",sans-serif;font-size:17px;margin:0}
 .membership-plan-title strong{color:var(--blue);font-size:10px}
+.membership-plan-price{font-family:"Space Grotesk",sans-serif;font-size:22px;font-weight:700;margin:-8px 0 18px}.membership-plan-price span{color:var(--muted);font-family:"DM Sans",sans-serif;font-size:10px;font-weight:500}
 .membership-feature-list{border-top:1px solid var(--line)}
 .membership-feature-row{display:flex;align-items:center;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding:11px 0}
 .membership-feature-row span{color:var(--muted);font-size:11px}

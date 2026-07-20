@@ -711,12 +711,13 @@ function renderMembershipComparison() {
   ];
   document.getElementById("currentPlanName").textContent = currentName;
   document.getElementById("currentPlanState").textContent = "Active";
+  document.getElementById("currentPlanPrice").innerHTML = premium ? '€9.99 <span>/ month</span>' : betaAccess ? '€0 <span>during private beta</span>' : '€0 <span>/ month</span>';
   document.getElementById("premiumPlanState").textContent = premium ? "Your current plan" : "Available later";
   document.getElementById("currentPlanFeatures").innerHTML = membershipFeaturesMarkup(currentFeatures);
   document.getElementById("premiumPlanFeatures").innerHTML = membershipFeaturesMarkup(premiumFeatures);
   document.getElementById("membershipPlanNote").textContent = premium
     ? "Premium is active on your account. This comparison does not contain billing or payment controls."
-    : "Premium subscriptions are not available yet. No payment will be requested.";
+    : "Premium will cost €9.99 per month when subscriptions become available. No payment will be requested yet.";
 }
 
 function renderAccount() {

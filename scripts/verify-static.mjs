@@ -100,10 +100,10 @@ for (const surface of ["applicationsView", "applicationTodayList", "applicationP
 for (const surface of ["interviewView", "interviewJobSelect", "generateInterviewButton", "interviewStage", "interviewBadgeList"]) {
   if (!ids.includes(surface)) throw new Error(`Interview preparation surface is missing: ${surface}`);
 }
-for (const surface of ["membershipPlanModal", "currentPlanName", "currentPlanFeatures", "premiumPlanFeatures", "membershipPlanNote"]) {
+for (const surface of ["membershipPlanModal", "currentPlanName", "currentPlanPrice", "currentPlanFeatures", "premiumPlanFeatures", "membershipPlanNote"]) {
   if (!ids.includes(surface)) throw new Error(`Membership comparison surface is missing: ${surface}`);
 }
-if (!app.includes("renderMembershipComparison") || !app.includes('openModal("membershipPlanModal")') || !html.includes("No payment will be requested")) {
+if (!app.includes("renderMembershipComparison") || !app.includes('openModal("membershipPlanModal")') || !html.includes("€9.99") || !html.includes("No payment will be requested")) {
   throw new Error("Profile membership comparison or no-payment state is incomplete");
 }
 for (const field of ["next_action", "follow_up_date", "interview_at", "contact_name", "contact_email"]) {
