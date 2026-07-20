@@ -99,6 +99,7 @@
           <button class="nav-item is-active" data-view="overview"><span class="nav-icon">◈</span>Overview</button>
           <button class="nav-item" data-view="paths"><span class="nav-icon">↗</span>Job paths</button>
           <button class="nav-item" data-view="applications"><span class="nav-icon">▦</span>Applications</button>
+          <button class="nav-item" data-view="interview"><span class="nav-icon">◇</span>Interview practice</button>
           <button class="nav-item" data-view="knowledge"><span class="nav-icon">▤</span>Knowledge</button>
           <button class="nav-item" data-view="plan"><span class="nav-icon">✓</span>Action plan</button>
           <button class="nav-item" data-view="progress"><span class="nav-icon">◫</span>Progress</button>
@@ -168,6 +169,33 @@
             <div><label class="field-label" for="applicationPathFilter">Job path</label><select class="input" id="applicationPathFilter"><option value="all">All job paths</option></select></div>
           </div>
           <div id="applicationKanban" class="application-kanban" aria-label="Application pipeline"></div>
+        </section>
+
+        <section class="view" id="interviewView">
+          <div class="page-intro"><div><p class="eyebrow">Interview preparation</p><h2>Practise for the job you want</h2><p>Build truthful answers from your CV, saved evidence, and the role’s actual requirements.</p></div></div>
+          <section class="panel interview-scorebar" aria-label="Practice progress">
+            <div><span>Level</span><strong id="interviewLevel">1</strong></div>
+            <div class="interview-xp"><span id="interviewXpLabel">0 XP · 100 to next level</span><div class="meter-track"><span id="interviewXpBar"></span></div></div>
+            <div><span>Practice streak</span><strong id="interviewStreak">0 days</strong></div>
+          </section>
+          <div class="interview-layout">
+            <aside class="panel interview-sidebar">
+              <div class="section-heading"><div><p class="eyebrow">Set up a round</p><h3>Target job</h3></div></div>
+              <label class="field-label" for="interviewJobSelect">Saved opportunity</label>
+              <select class="input" id="interviewJobSelect"></select>
+              <button class="button button-dark button-full" id="generateInterviewButton">Generate 6 questions</button>
+              <p class="interview-allowance" id="interviewAllowance">Free includes one practice set each month.</p>
+              <div class="interview-history-head"><h3>Previous rounds</h3><span id="interviewSessionCount">0</span></div>
+              <div id="interviewSessionList" class="interview-session-list"></div>
+              <div class="interview-badges">
+                <h3>Achievements</h3>
+                <div id="interviewBadgeList"></div>
+              </div>
+            </aside>
+            <section class="panel interview-stage" id="interviewStage">
+              <div class="empty-state empty-state-action"><strong>No practice round selected</strong><p>Choose a saved job and generate a focused set of interview questions.</p></div>
+            </section>
+          </div>
         </section>
 
         <section class="view" id="knowledgeView">

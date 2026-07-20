@@ -45,6 +45,9 @@ Deno.serve(async (request) => {
       userClient.from("analysis_evidence_links").select("*").eq("user_id", userId).order("created_at"),
       userClient.from("cv_guidance").select("*").eq("user_id", userId).order("created_at"),
       userClient.from("shared_reports").select("id,path_id,analysis_id,expires_at,revoked_at,created_at").eq("user_id", userId).order("created_at"),
+      userClient.from("interview_practice_sessions").select("*").eq("user_id", userId).order("started_at"),
+      userClient.from("interview_practice_answers").select("*").eq("user_id", userId).order("created_at"),
+      userClient.from("interview_game_profiles").select("*").eq("user_id", userId).maybeSingle(),
       admin.storage.from("private-cvs").list(userId, { limit: 100 }),
     ]);
     const error = queries.find((result) => result.error)?.error;
@@ -71,7 +74,10 @@ Deno.serve(async (request) => {
       analysis_evidence_links: queries[9].data || [],
       cv_guidance: queries[10].data || [],
       shared_reports: queries[11].data || [],
-      stored_cv_files: (queries[12].data || []).map((file) => ({
+      interview_practice_sessions: queries[12].data || [],
+      interview_practice_answers: queries[13].data || [],
+      interview_game_profile: queries[14].data,
+      stored_cv_files: (queries[15].data || []).map((file) => ({
         name: file.name,
         created_at: file.created_at,
         updated_at: file.updated_at,

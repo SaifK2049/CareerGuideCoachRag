@@ -463,6 +463,12 @@ verify_jwt = true
 import_map = "./functions/export-account/deno.json"
 entrypoint = "./functions/export-account/index.ts"
 
+[functions.interview-prep]
+enabled = true
+verify_jwt = true
+import_map = "./functions/interview-prep/deno.json"
+entrypoint = "./functions/interview-prep/index.ts"
+
 [functions.stripe-webhook]
 enabled = true
 verify_jwt = false

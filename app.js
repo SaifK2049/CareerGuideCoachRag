@@ -118,7 +118,10 @@ const demoState = {
   actionItems: [],
   evidenceLinks: [],
   cvGuidance: [],
-  sharedReports: []
+  sharedReports: [],
+  interviewSessions: [],
+  interviewAnswers: [],
+  interviewGameProfile: { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] }
 };
 
 let state = loadState();
@@ -130,10 +133,19 @@ let analysisTimers = [];
 let analysisUi = {};
 let cvStarterActionPromise = null;
 const analysisActionPromises = new Map();
+let selectedInterviewSessionId = "";
+let selectedInterviewQuestion = 0;
 
 function loadState() {
   if (!config.localPreview) return emptyState();
-  try { return JSON.parse(localStorage.getItem(cacheKey())) || structuredClone(demoState); }
+  try {
+    const loaded = JSON.parse(localStorage.getItem(cacheKey()));
+    if (!loaded) return structuredClone(demoState);
+    loaded.interviewSessions = loaded.interviewSessions || [];
+    loaded.interviewAnswers = loaded.interviewAnswers || [];
+    loaded.interviewGameProfile = loaded.interviewGameProfile || { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] };
+    return loaded;
+  }
   catch (error) { return structuredClone(demoState); }
 }
 
@@ -166,7 +178,10 @@ function emptyState() {
     actionItems: [],
     evidenceLinks: [],
     cvGuidance: [],
-    sharedReports: []
+    sharedReports: [],
+    interviewSessions: [],
+    interviewAnswers: [],
+    interviewGameProfile: { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] }
   };
 }
 
@@ -183,6 +198,9 @@ async function loadCloudState() {
     cloud.from("analysis_evidence_links").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
     cloud.from("cv_guidance").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(30),
     cloud.from("shared_reports").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+    cloud.from("interview_practice_sessions").select("*").eq("user_id", userId).order("started_at", { ascending: false }).limit(30),
+    cloud.from("interview_practice_answers").select("*").eq("user_id", userId).order("created_at"),
+    cloud.from("interview_game_profiles").select("*").eq("user_id", userId).maybeSingle(),
     cloud.rpc("get_my_account_access")
   ]);
   results.forEach(function(result) { if (result.error) throw result.error; });
@@ -224,9 +242,13 @@ async function loadCloudState() {
     actionItems: results[6].data || [],
     evidenceLinks: results[7].data || [],
     cvGuidance: results[8].data || [],
-    sharedReports: results[9].data || []
+    sharedReports: results[9].data || [],
+    interviewSessions: results[10].data || [],
+    interviewAnswers: results[11].data || [],
+    interviewGameProfile: results[12].data || { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] }
   };
-  accountAccess = results[10].data || accountAccess;
+  accountAccess = results[13].data || accountAccess;
+  if (!selectedInterviewSessionId && state.interviewSessions[0]) selectedInterviewSessionId = state.interviewSessions[0].id;
 }
 
 async function deleteMissing(table, ids) {
@@ -700,6 +722,7 @@ function render() {
     renderActionPlan(null);
     renderProgress(null);
     renderApplicationCockpit();
+    renderInterviewPractice();
     return;
   }
   const items = analysisFor(path);
@@ -728,11 +751,13 @@ function render() {
   renderActionPlan(path);
   renderProgress(path);
   renderApplicationCockpit();
+  renderInterviewPractice();
   renderSetupChecklist(path);
   renderNextAction(path);
   document.getElementById("pageTitle").textContent = activeView === "overview" ? "Overview"
     : activeView === "paths" ? "Job paths"
     : activeView === "applications" ? "Application cockpit"
+    : activeView === "interview" ? "Interview practice"
     : activeView === "knowledge" ? "Knowledge"
     : activeView === "plan" ? "Action plan"
     : activeView === "progress" ? "Progress & reports"
@@ -892,6 +917,232 @@ function renderApplicationCockpit() {
       if (parts.length === 2) updateApplicationStatus(parts[0], parts[1], column.dataset.applicationStage);
     });
   });
+}
+
+const INTERVIEW_BADGES = [
+  ["first_answer", "First answer", "Save your first practice answer"],
+  ["warm_up", "Warmed up", "Answer five interview questions"],
+  ["session_complete", "Full round", "Complete a six-question round"],
+  ["streak_3", "In rhythm", "Practise on three consecutive days"],
+  ["xp_500", "Interview ready", "Earn 500 practice XP"]
+];
+
+function localInterviewQuestions(job) {
+  const role = job.title || "this role";
+  return [
+    { category: "Opening", difficulty: "starter", question: "Walk me through the experience that best prepares you for " + role + ".", why_it_matters: "A strong opening connects your background to the role without repeating your CV.", answer_framework: "Present → relevant past → why this role. Keep the thread focused on two or three requirements from the job.", evidence_prompts: ["Choose one recent achievement with a measurable outcome.", "Explain why that experience transfers to this role."], evidence_labels: ["J1"] },
+    { category: "Role expertise", difficulty: "stretch", question: "Which requirement in this role would you be expected to own from day one, and how have you handled similar work?", why_it_matters: "The interviewer is testing depth and how quickly you can contribute.", answer_framework: "Name the requirement, describe your comparable responsibility, explain your decisions, then state the result.", evidence_prompts: ["Use a specific project, not a general claim.", "Mention a trade-off or decision you personally made."], evidence_labels: ["J1"] },
+    { category: "Problem solving", difficulty: "stretch", question: "Tell me about a difficult problem you diagnosed when the cause was not obvious.", why_it_matters: "This reveals how you reason under uncertainty.", answer_framework: "Situation → signals → hypotheses → tests → resolution → learning.", evidence_prompts: ["Describe the evidence that changed your mind.", "Quantify the impact of the resolution if possible."], evidence_labels: ["J1"] },
+    { category: "Collaboration", difficulty: "starter", question: "Describe a time you had to align people with different priorities to deliver an outcome.", why_it_matters: "Most roles depend on influence beyond individual execution.", answer_framework: "Set the competing priorities, show how you listened and created alignment, then give the outcome.", evidence_prompts: ["Name the stakeholders and their concerns.", "Be clear about your own contribution."], evidence_labels: ["J1"] },
+    { category: "Growth", difficulty: "challenge", question: "Which part of this job would stretch you most, and how would you close that gap?", why_it_matters: "A credible answer shows self-awareness without underselling your readiness.", answer_framework: "Acknowledge a bounded gap, connect adjacent evidence, and give a concrete 30–60 day learning plan.", evidence_prompts: ["Avoid claiming experience you do not have.", "Show evidence that you learn effectively."], evidence_labels: ["J1"] },
+    { category: "Judgement", difficulty: "challenge", question: "Imagine you join and discover the team’s highest-priority initiative is at risk. What would you do in your first week?", why_it_matters: "The interviewer wants to see prioritisation, communication, and practical judgement.", answer_framework: "Clarify the goal → inspect evidence → identify constraints → align owners → reduce the largest risk → communicate next steps.", evidence_prompts: ["Ask clarifying questions before proposing a solution.", "Explain how you would make progress visible."], evidence_labels: ["J1"] }
+  ];
+}
+
+function updateLocalInterviewGame(answerXp, completionXp) {
+  const profile = state.interviewGameProfile;
+  const existingBadges = new Set(profile.badges || []);
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  profile.total_xp += answerXp + completionXp;
+  if (answerXp) {
+    profile.questions_answered += 1;
+    profile.current_streak = profile.last_practice_date === today ? profile.current_streak
+      : profile.last_practice_date === yesterday ? profile.current_streak + 1 : 1;
+    profile.last_practice_date = today;
+    profile.longest_streak = Math.max(profile.longest_streak, profile.current_streak);
+  }
+  if (completionXp) profile.sessions_completed += 1;
+  INTERVIEW_BADGES.filter(function(badge) {
+    return badge[0] === "first_answer" ? profile.questions_answered >= 1
+      : badge[0] === "warm_up" ? profile.questions_answered >= 5
+      : badge[0] === "session_complete" ? profile.sessions_completed >= 1
+      : badge[0] === "streak_3" ? profile.current_streak >= 3
+      : profile.total_xp >= 500;
+  }).forEach(function(badge) { existingBadges.add(badge[0]); });
+  profile.badges = [...existingBadges];
+}
+
+async function generateInterviewPractice() {
+  const select = document.getElementById("interviewJobSelect");
+  const button = document.getElementById("generateInterviewButton");
+  const record = applicationRecords().find(function(item) { return item.job.id === select.value; });
+  if (!record) { toast("Add and select a job first"); return; }
+  if (!record.job.description.trim()) { toast("Add the job description before generating practice"); return; }
+  button.disabled = true;
+  button.textContent = "Building your round…";
+  try {
+    if (config.localPreview) {
+      const practice = {
+        id: crypto.randomUUID(), job_id: record.job.id, path_id: record.path.id,
+        title: record.job.title, company: record.job.company || "",
+        questions: localInterviewQuestions(record.job), source_context: [{ label: "J1", type: "job", title: record.job.title }],
+        status: "active", answered_count: 0, earned_xp: 0, started_at: new Date().toISOString()
+      };
+      state.interviewSessions.unshift(practice);
+      selectedInterviewSessionId = practice.id;
+      selectedInterviewQuestion = 0;
+      saveState();
+      render();
+      toast("Practice round ready");
+      return;
+    }
+    const result = await cloud.functions.invoke("interview-prep", { body: { jobId: record.job.id } });
+    if (result.error) throw result.error;
+    if (!result.data || !result.data.practice) throw new Error("Practice round was not returned");
+    if (result.data.access) accountAccess.interview_used = result.data.access.used;
+    selectedInterviewSessionId = result.data.practice.id;
+    selectedInterviewQuestion = 0;
+    await loadCloudState();
+    render();
+    toast("Practice round ready");
+  } catch (error) {
+    toast(await functionErrorMessage(error, "Interview practice could not be created"));
+  } finally {
+    button.disabled = false;
+    button.textContent = "Generate 6 questions";
+  }
+}
+
+async function saveInterviewAnswer(sessionId, questionIndex, answerText, selfRating) {
+  if (!answerText.trim()) { toast("Write your answer before saving"); return; }
+  const button = document.querySelector("#saveInterviewAnswerButton");
+  button.disabled = true;
+  button.textContent = "Saving answer…";
+  try {
+    if (config.localPreview) {
+      const practice = state.interviewSessions.find(function(item) { return item.id === sessionId; });
+      const existing = state.interviewAnswers.find(function(item) { return item.session_id === sessionId && item.question_index === questionIndex; });
+      let answerXp = 0;
+      if (existing) {
+        existing.answer_text = answerText.trim();
+        existing.self_rating = selfRating;
+      } else {
+        answerXp = 10 + (answerText.trim().length >= 150 ? 5 : 0);
+        state.interviewAnswers.push({ id: crypto.randomUUID(), session_id: sessionId, question_index: questionIndex, answer_text: answerText.trim(), self_rating: selfRating, earned_xp: answerXp });
+      }
+      const answered = state.interviewAnswers.filter(function(item) { return item.session_id === sessionId; }).length;
+      const completionXp = practice.status !== "completed" && answered >= practice.questions.length ? 50 : 0;
+      practice.answered_count = answered;
+      practice.earned_xp += answerXp + completionXp;
+      if (completionXp) { practice.status = "completed"; practice.completed_at = new Date().toISOString(); }
+      updateLocalInterviewGame(answerXp, completionXp);
+      saveState();
+      render();
+      toast(completionXp ? "Round complete · +" + (answerXp + completionXp) + " XP"
+        : answerXp ? "Answer saved · +" + answerXp + " XP" : "Answer updated");
+      return;
+    }
+    const result = await cloud.rpc("record_interview_answer", {
+      p_session_id: sessionId,
+      p_question_index: questionIndex,
+      p_answer_text: answerText.trim(),
+      p_self_rating: selfRating
+    });
+    if (result.error) throw result.error;
+    const award = result.data || {};
+    await loadCloudState();
+    render();
+    toast(award.session_completed
+      ? "Round complete · +" + (Number(award.answer_xp || 0) + Number(award.completion_xp || 0)) + " XP"
+      : "Answer saved" + (award.answer_xp ? " · +" + award.answer_xp + " XP" : ""));
+  } catch (error) {
+    toast(error.message || "Your answer could not be saved");
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "Save answer"; }
+  }
+}
+
+function renderInterviewPractice() {
+  const records = applicationRecords();
+  const select = document.getElementById("interviewJobSelect");
+  const previousJob = select.value;
+  select.innerHTML = records.length ? records.map(function(record) {
+    return '<option value="' + record.job.id + '">' + safe(record.job.title) + " · " + safe(record.job.company || record.path.name) + '</option>';
+  }).join("") : '<option value="">Add a saved job first</option>';
+  select.value = records.some(function(record) { return record.job.id === previousJob; }) ? previousJob
+    : records.some(function(record) { return record.job.id === (state.interviewSessions[0] || {}).job_id; }) ? state.interviewSessions[0].job_id
+    : records[0] ? records[0].job.id : "";
+
+  const feature = accountAccess.features && accountAccess.features.interview_prep;
+  const quota = feature && feature.quota;
+  document.getElementById("generateInterviewButton").disabled = !records.length || (feature && !feature.enabled);
+  document.getElementById("interviewAllowance").textContent = quota === null
+    ? "Unlimited practice rounds are included in your plan."
+    : (accountAccess.plan === "premium" ? "Premium includes " + (quota || 20) + " practice rounds each month." : "Free includes one practice round each month.");
+  document.getElementById("generateInterviewButton").onclick = generateInterviewPractice;
+
+  const game = state.interviewGameProfile || {};
+  const totalXp = Number(game.total_xp || 0);
+  const level = Math.floor(totalXp / 100) + 1;
+  const levelXp = totalXp % 100;
+  document.getElementById("interviewLevel").textContent = level;
+  document.getElementById("interviewXpLabel").textContent = totalXp + " XP · " + (100 - levelXp) + " to level " + (level + 1);
+  document.getElementById("interviewXpBar").style.width = levelXp + "%";
+  document.getElementById("interviewStreak").textContent = Number(game.current_streak || 0) + (Number(game.current_streak || 0) === 1 ? " day" : " days");
+
+  const sessions = state.interviewSessions || [];
+  if (!sessions.some(function(item) { return item.id === selectedInterviewSessionId; })) {
+    selectedInterviewSessionId = sessions[0] ? sessions[0].id : "";
+    selectedInterviewQuestion = 0;
+  }
+  document.getElementById("interviewSessionCount").textContent = sessions.length;
+  const list = document.getElementById("interviewSessionList");
+  list.innerHTML = sessions.length ? sessions.map(function(item) {
+    return '<button type="button" class="interview-session ' + (item.id === selectedInterviewSessionId ? "is-active" : "") + '" data-interview-session="' + item.id + '"><strong>' + safe(item.title) + '</strong><span>' + safe(item.company || "Target company") + '</span><small>' + Number(item.answered_count || 0) + "/" + item.questions.length + " answered · " + Number(item.earned_xp || 0) + " XP</small></button>";
+  }).join("") : '<p class="interview-empty-copy">Your generated rounds will appear here.</p>';
+  list.querySelectorAll("[data-interview-session]").forEach(function(button) {
+    button.onclick = function() {
+      selectedInterviewSessionId = button.dataset.interviewSession;
+      const practiceAnswers = state.interviewAnswers.filter(function(item) { return item.session_id === selectedInterviewSessionId; });
+      const sessionItem = sessions.find(function(item) { return item.id === selectedInterviewSessionId; });
+      selectedInterviewQuestion = sessionItem.questions.findIndex(function(_question, index) {
+        return !practiceAnswers.some(function(answer) { return answer.question_index === index; });
+      });
+      if (selectedInterviewQuestion < 0) selectedInterviewQuestion = 0;
+      renderInterviewPractice();
+    };
+  });
+
+  const unlocked = new Set(game.badges || []);
+  document.getElementById("interviewBadgeList").innerHTML = INTERVIEW_BADGES.map(function(badge) {
+    const earned = unlocked.has(badge[0]);
+    return '<div class="interview-badge ' + (earned ? "is-earned" : "") + '"><span aria-hidden="true">' + (earned ? "✓" : "○") + '</span><div><strong>' + badge[1] + '</strong><small>' + badge[2] + '</small></div></div>';
+  }).join("");
+
+  const stage = document.getElementById("interviewStage");
+  const practice = sessions.find(function(item) { return item.id === selectedInterviewSessionId; });
+  if (!practice) {
+    stage.innerHTML = '<div class="empty-state empty-state-action"><strong>No practice round selected</strong><p>Choose a saved job and generate a focused set of interview questions.</p></div>';
+    return;
+  }
+  const questions = practice.questions || [];
+  selectedInterviewQuestion = Math.max(0, Math.min(selectedInterviewQuestion, questions.length - 1));
+  const question = questions[selectedInterviewQuestion];
+  const answers = state.interviewAnswers.filter(function(item) { return item.session_id === practice.id; });
+  const answer = answers.find(function(item) { return item.question_index === selectedInterviewQuestion; });
+  const sources = new Map((practice.source_context || []).map(function(source) { return [source.label, source.title]; }));
+  stage.innerHTML = '<div class="interview-stage-head"><div><span>' + safe(practice.title) + (practice.company ? " · " + safe(practice.company) : "") + '</span><h3>Question ' + (selectedInterviewQuestion + 1) + " of " + questions.length + '</h3></div><strong>' + Number(practice.answered_count || 0) + "/" + questions.length + " complete</strong></div>"
+    + '<div class="interview-question-progress">' + questions.map(function(_item, index) { return '<button type="button" class="' + (index === selectedInterviewQuestion ? "is-current" : answers.some(function(saved) { return saved.question_index === index; }) ? "is-done" : "") + '" data-interview-question="' + index + '" aria-label="Open question ' + (index + 1) + '"></button>'; }).join("") + '</div>'
+    + '<article class="interview-question"><div class="interview-question-meta"><span>' + safe(question.category) + '</span><span>' + safe(question.difficulty) + '</span></div><h2>' + safe(question.question) + '</h2><p>' + safe(question.why_it_matters) + '</p></article>'
+    + '<form id="interviewAnswerForm"><label class="field-label" for="interviewAnswer">Practise your answer</label><textarea class="textarea" id="interviewAnswer" rows="9" maxlength="8000" placeholder="Write the answer you would give aloud. Specific examples earn the strongest practice value.">' + safe(answer && answer.answer_text || "") + '</textarea><div class="interview-rating"><label class="field-label" for="interviewRating">How confident did that feel?</label><select class="input" id="interviewRating"><option value="1">1 · I struggled</option><option value="2">2 · Needs work</option><option value="3">3 · Getting there</option><option value="4">4 · Strong</option><option value="5">5 · Ready to say aloud</option></select></div><div class="form-actions"><button type="button" class="button button-light" id="previousInterviewQuestion"' + (selectedInterviewQuestion === 0 ? " disabled" : "") + '>Previous</button><button type="submit" class="button button-dark" id="saveInterviewAnswerButton">' + (answer ? "Update answer" : "Save answer") + '</button><button type="button" class="button button-light" id="nextInterviewQuestion"' + (selectedInterviewQuestion === questions.length - 1 ? " disabled" : "") + '>Next</button></div></form>'
+    + (answer ? '<section class="interview-coaching"><p class="eyebrow">Answer coaching</p><h3>A structure to rehearse</h3><p>' + safe(question.answer_framework) + '</p><h4>Evidence to bring in</h4><ul>' + question.evidence_prompts.map(function(prompt) { return "<li>" + safe(prompt) + "</li>"; }).join("") + '</ul><div class="interview-sources">Grounded in ' + question.evidence_labels.map(function(label) { return "<span>" + safe(sources.get(label) || label) + "</span>"; }).join("") + "</div></section>" : '<p class="interview-coaching-note">Save an answer to reveal a role-specific structure and evidence prompts.</p>');
+  stage.querySelector("#interviewRating").value = String(answer && answer.self_rating || 3);
+  stage.querySelectorAll("[data-interview-question]").forEach(function(button) {
+    button.onclick = function() { selectedInterviewQuestion = Number(button.dataset.interviewQuestion); renderInterviewPractice(); };
+  });
+  stage.querySelector("#previousInterviewQuestion").onclick = function() {
+    selectedInterviewQuestion = Math.max(0, selectedInterviewQuestion - 1);
+    renderInterviewPractice();
+  };
+  stage.querySelector("#nextInterviewQuestion").onclick = function() {
+    selectedInterviewQuestion = Math.min(questions.length - 1, selectedInterviewQuestion + 1);
+    renderInterviewPractice();
+  };
+  stage.querySelector("#interviewAnswerForm").onsubmit = function(event) {
+    event.preventDefault();
+    saveInterviewAnswer(practice.id, selectedInterviewQuestion, stage.querySelector("#interviewAnswer").value, Number(stage.querySelector("#interviewRating").value));
+  };
 }
 
 function updateApplicationStatus(jobId, pathId, status) {
@@ -2096,6 +2347,10 @@ document.getElementById("clearWorkspaceButton").addEventListener("click", async 
       if (analysisDeletion.error) throw analysisDeletion.error;
       const chunkDeletion = await cloud.from("document_chunks").delete().eq("user_id", session.user.id);
       if (chunkDeletion.error) throw chunkDeletion.error;
+      const interviewDeletion = await cloud.from("interview_practice_sessions").delete().eq("user_id", session.user.id);
+      if (interviewDeletion.error) throw interviewDeletion.error;
+      const gameDeletion = await cloud.from("interview_game_profiles").delete().eq("user_id", session.user.id);
+      if (gameDeletion.error) throw gameDeletion.error;
     }
     const profile = state.profile;
     state = emptyState();

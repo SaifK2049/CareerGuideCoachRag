@@ -25,7 +25,9 @@ const [
   waitlistFunction,
   productMigration,
   cockpitMigration,
+  interviewMigration,
   cvGuidanceFunction,
+  interviewFunction,
   importJobFunction,
   sharedReportFunction,
   reportPage,
@@ -53,7 +55,9 @@ const [
   readFile(resolve(root, "supabase/functions/join-waitlist/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260718225738_product_workflows.sql"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260720174347_application_cockpit.sql"), "utf8"),
+  readFile(resolve(root, "supabase/migrations/20260720193851_interview_preparation_gamification.sql"), "utf8"),
   readFile(resolve(root, "supabase/functions/cv-guidance/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/interview-prep/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/functions/import-job/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/functions/shared-report/index.ts"), "utf8"),
   readFile(resolve(root, "report.html"), "utf8"),
@@ -89,6 +93,9 @@ for (const surface of ["planView", "progressView", "actionPlanList", "analysisHi
 for (const surface of ["applicationsView", "applicationTodayList", "applicationPathFilter", "applicationSearch", "applicationKanban"]) {
   if (!ids.includes(surface)) throw new Error(`Application cockpit surface is missing: ${surface}`);
 }
+for (const surface of ["interviewView", "interviewJobSelect", "generateInterviewButton", "interviewStage", "interviewBadgeList"]) {
+  if (!ids.includes(surface)) throw new Error(`Interview preparation surface is missing: ${surface}`);
+}
 for (const field of ["next_action", "follow_up_date", "interview_at", "contact_name", "contact_email"]) {
   if (!cockpitMigration.includes(`add column ${field}`)) throw new Error(`Application cockpit field is missing: ${field}`);
 }
@@ -111,7 +118,7 @@ for (const functionName of ["analyze-career", "create-checkout-session", "create
   const pattern = new RegExp(`\\[functions\\.${functionName}\\][\\s\\S]*?verify_jwt = true`);
   if (!pattern.test(supabaseConfig)) throw new Error(`${functionName} must require a user JWT`);
 }
-for (const functionName of ["cv-guidance", "import-job"]) {
+for (const functionName of ["cv-guidance", "import-job", "interview-prep"]) {
   const pattern = new RegExp(`\\[functions\\.${functionName}\\][\\s\\S]*?verify_jwt = true`);
   if (!pattern.test(supabaseConfig)) throw new Error(`${functionName} must require a user JWT`);
 }
@@ -207,6 +214,29 @@ for (const table of ["action_plan_items", "analysis_evidence_links", "cv_guidanc
   if (!productMigration.includes(`alter table public.${table} enable row level security`)) {
     throw new Error(`Product workflow table does not enable RLS: ${table}`);
   }
+}
+for (const table of ["interview_practice_sessions", "interview_practice_answers", "interview_game_profiles"]) {
+  if (!interviewMigration.includes(`alter table public.${table} enable row level security`)) {
+    throw new Error(`Interview preparation table does not enable RLS: ${table}`);
+  }
+}
+for (const indexName of ["interview_sessions_path_owner_idx", "interview_sessions_job_owner_idx", "interview_answers_session_owner_idx"]) {
+  if (!interviewMigration.includes(indexName)) throw new Error(`Interview foreign key index is missing: ${indexName}`);
+}
+if (
+  !interviewMigration.includes("record_interview_answer_internal") ||
+  !interviewMigration.includes("refund_interview_prep") ||
+  !interviewMigration.includes("v_completion_xp := 50") ||
+  !interviewMigration.includes("current_streak") ||
+  !interviewFunction.includes("json_schema") ||
+  !interviewFunction.includes('userClient.rpc("reserve_interview_prep"') ||
+  !interviewFunction.includes('admin.rpc("refund_interview_prep"') ||
+  !interviewFunction.includes("consumeRateLimit") ||
+  !interviewFunction.includes("handleCors") ||
+  !app.includes("renderInterviewPractice") ||
+  !app.includes('cloud.rpc("record_interview_answer"')
+) {
+  throw new Error("Secure interview preparation and gamification flow is incomplete");
 }
 if (
   !cvGuidanceFunction.includes("Never invent experience") ||

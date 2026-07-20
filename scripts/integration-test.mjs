@@ -231,6 +231,122 @@ try {
   });
   assert.equal(duplicateJob.response.ok, false, "duplicate job content hashes must be rejected");
 
+  const firstInterviewReservation = await rest("rpc/reserve_interview_prep", alice, {
+    method: "POST",
+    body: {},
+  });
+  assert.equal(firstInterviewReservation.response.status, 200, JSON.stringify(firstInterviewReservation.data));
+  assert.equal(firstInterviewReservation.data[0].allowed, true);
+  assert.equal(firstInterviewReservation.data[0].used, 1);
+  const overInterviewQuota = await rest("rpc/reserve_interview_prep", alice, {
+    method: "POST",
+    body: {},
+  });
+  assert.equal(overInterviewQuota.data[0].allowed, false, "free users receive one practice set per month");
+  const browserRefund = await rest("rpc/refund_interview_prep", alice, {
+    method: "POST",
+    body: { p_user_id: alice.id },
+  });
+  assert.equal(browserRefund.response.ok, false, "browser clients cannot refund their own AI quota");
+  const serviceRefund = await serviceRest("rpc/refund_interview_prep", {
+    method: "POST",
+    body: { p_user_id: alice.id },
+  });
+  assert.equal(serviceRefund.response.ok, true, JSON.stringify(serviceRefund.data));
+
+  const directInterviewInsert = await rest("interview_practice_sessions", alice, {
+    method: "POST",
+    body: {
+      user_id: alice.id,
+      path_id: pathIds[0],
+      job_id: firstJobId,
+      title: "Browser-created session",
+      questions: [{}, {}, {}],
+    },
+  });
+  assert.equal(directInterviewInsert.response.ok, false, "browser clients cannot create generated interview sessions");
+
+  const interviewQuestions = Array.from({ length: 6 }, function(_item, index) {
+    return {
+      category: index < 2 ? "role" : "behaviour",
+      difficulty: index < 2 ? "starter" : "stretch",
+      question: `Integration interview question ${index + 1}`,
+      why_it_matters: "Tests relevant evidence.",
+      answer_framework: "Situation, action, result, learning.",
+      evidence_prompts: ["Use a specific supported example."],
+      evidence_labels: ["J1"],
+    };
+  });
+  const savedInterview = await serviceRest("interview_practice_sessions", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: {
+      user_id: alice.id,
+      path_id: pathIds[0],
+      job_id: firstJobId,
+      title: "Platform role 1",
+      company: "Integration Company",
+      questions: interviewQuestions,
+      source_context: [{ label: "J1", type: "job", title: "Platform role 1" }],
+      model: "integration-model",
+    },
+  });
+  assert.equal(savedInterview.response.status, 201, JSON.stringify(savedInterview.data));
+  const interviewSessionId = savedInterview.data[0].id;
+  const bobCannotReadInterview = await rest(`interview_practice_sessions?id=eq.${interviewSessionId}&select=*`, bob);
+  assert.deepEqual(bobCannotReadInterview.data, [], "interview sessions must remain owner-only");
+  const directAnswerInsert = await rest("interview_practice_answers", alice, {
+    method: "POST",
+    body: {
+      user_id: alice.id,
+      session_id: interviewSessionId,
+      question_index: 0,
+      answer_text: "Browser-created XP",
+      self_rating: 5,
+    },
+  });
+  assert.equal(directAnswerInsert.response.ok, false, "browser clients must use the XP-awarding answer RPC");
+
+  for (let index = 0; index < 6; index += 1) {
+    const answer = await rest("rpc/record_interview_answer", alice, {
+      method: "POST",
+      body: {
+        p_session_id: interviewSessionId,
+        p_question_index: index,
+        p_answer_text: `Specific integration answer ${index + 1}`,
+        p_self_rating: 3,
+      },
+    });
+    assert.equal(answer.response.status, 200, JSON.stringify(answer.data));
+    assert.equal(answer.data.answer_xp, 10);
+    assert.equal(answer.data.completion_xp, index === 5 ? 50 : 0);
+  }
+  const repeatedAnswer = await rest("rpc/record_interview_answer", alice, {
+    method: "POST",
+    body: {
+      p_session_id: interviewSessionId,
+      p_question_index: 0,
+      p_answer_text: "Updated answer without duplicate XP",
+      p_self_rating: 4,
+    },
+  });
+  assert.equal(repeatedAnswer.data.answer_xp, 0, "editing an answer must not award XP again");
+  const gameProfile = await rest(`interview_game_profiles?user_id=eq.${alice.id}&select=*`, alice);
+  assert.equal(gameProfile.data[0].total_xp, 110);
+  assert.equal(gameProfile.data[0].questions_answered, 6);
+  assert.equal(gameProfile.data[0].sessions_completed, 1);
+  assert.equal(gameProfile.data[0].badges.includes("session_complete"), true);
+  const bobCannotAnswerAliceSession = await rest("rpc/record_interview_answer", bob, {
+    method: "POST",
+    body: {
+      p_session_id: interviewSessionId,
+      p_question_index: 0,
+      p_answer_text: "Cross-tenant answer",
+      p_self_rating: 5,
+    },
+  });
+  assert.equal(bobCannotAnswerAliceSession.response.ok, false);
+
   let firstEvidenceId = "";
   for (let index = 1; index <= 50; index += 1) {
     const evidenceId = crypto.randomUUID();
@@ -617,6 +733,13 @@ try {
   });
   assert.equal(unconfiguredImport.response.status, 503, JSON.stringify(unconfiguredImport.data));
   assert.equal(unconfiguredImport.data.code, "AI_NOT_CONFIGURED");
+  const unconfiguredInterview = await request("/functions/v1/interview-prep", {
+    token: alice.token,
+    method: "POST",
+    body: { jobId: firstJobId },
+  });
+  assert.equal(unconfiguredInterview.response.status, 503, JSON.stringify(unconfiguredInterview.data));
+  assert.equal(unconfiguredInterview.data.code, "AI_NOT_CONFIGURED");
 
   for (let index = 0; index < 5; index += 1) {
     const checkoutAttempt = await request("/functions/v1/create-checkout-session", {
@@ -648,6 +771,9 @@ try {
   assert.equal(exportResult.data.analysis_evidence_links.length, 1);
   assert.equal(exportResult.data.cv_guidance.length, 1);
   assert.equal(exportResult.data.shared_reports.length, 1);
+  assert.equal(exportResult.data.interview_practice_sessions.length, 1);
+  assert.equal(exportResult.data.interview_practice_answers.length, 6);
+  assert.equal(exportResult.data.interview_game_profile.total_xp, 110);
   assert.equal("token_hash" in exportResult.data.shared_reports[0], false);
   assert.equal(exportResult.data.stored_cv_files[0].name, "current-cv.pdf");
 
@@ -691,7 +817,7 @@ try {
   assert.equal(deletion.response.status, 200, JSON.stringify(deletion.data));
   assert.equal(deletion.data.deleted, true);
 
-  console.log("Private-beta integration contract verified: invite-only auth, consent, RLS isolation, beta quotas, idempotent persisted analysis, quota refunds, rate limiting, feedback, export, private storage, billing isolation, and account deletion.");
+  console.log("Private-beta integration contract verified: invite-only auth, consent, RLS isolation, beta quotas, interview gamification, idempotent persisted analysis, quota refunds, rate limiting, feedback, export, private storage, billing isolation, and account deletion.");
 } finally {
   await cleanup();
 }

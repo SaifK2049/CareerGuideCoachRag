@@ -8,6 +8,7 @@ A private, multi-user career intelligence workspace configured for a free, invit
 - adding explicit knowledge evidence;
 - measuring recurring job-skill demand against CV and knowledge evidence;
 - running saved, cited RAG analysis with idempotent quota handling;
+- generating job-specific interview rounds with answer coaching, XP, streaks, and achievements;
 - exporting a portable JSON copy of the account;
 - submitting privacy-safe beta feedback.
 
@@ -46,6 +47,7 @@ Production mode requires Supabase configuration and starts at the authentication
    npx supabase secrets set APP_URL=https://app.example.com
    npx supabase secrets set ALLOWED_ORIGINS=https://app.example.com
    npx supabase functions deploy analyze-career
+   npx supabase functions deploy interview-prep
    npx supabase functions deploy export-account
    npx supabase functions deploy delete-account
    ```
@@ -59,6 +61,7 @@ The migration enables row-level security on every exposed table. All policies bi
 Supabase Auth applies its own IP and endpoint limits to sign-in, sign-up, email, password-reset, verification and token-refresh requests. Masari adds an atomic PostgreSQL-backed limiter for authenticated Edge Functions:
 
 - AI analysis: 5 requests per 5 minutes per user, in addition to the monthly plan quota.
+- Interview practice generation: 4 requests per 10 minutes per user, with one free or 20 Premium rounds per month.
 - Stripe Checkout creation: 5 requests per 10 minutes per user.
 - Stripe billing portal creation: 10 requests per 10 minutes per user.
 - Account deletion: 3 attempts per hour per user.
@@ -92,7 +95,7 @@ counts, but never CV text, job descriptions, email addresses, or access tokens.
 Failed analyses display the first eight characters of the request ID as a support
 reference that can be searched in the Supabase Logs Explorer.
 
-The integration suite creates temporary admin-invited users and verifies disabled public signup, consent, RLS isolation, concurrent rate limiting, cross-tenant rejection, beta limits, persisted/idempotent analyses, quota refunds, feedback, account export, Stripe isolation, private CV storage, and permanent account deletion. Test users are deleted afterward.
+The integration suite creates temporary admin-invited users and verifies disabled public signup, consent, RLS isolation, concurrent rate limiting, cross-tenant rejection, beta limits, interview XP and achievements, persisted/idempotent analyses, quota refunds, feedback, account export, Stripe isolation, private CV storage, and permanent account deletion. Test users are deleted afterward.
 
 ## Deploy to Cloudflare Pages
 
@@ -112,7 +115,7 @@ See [docs/PRIVATE_BETA_LAUNCH.md](docs/PRIVATE_BETA_LAUNCH.md) for the beta acce
 
 ## RAG handoff
 
-Use **Export account data** to download `masari-account-export.json`. It includes the profile, CV text, paths, jobs, evidence, saved analyses and citations, audit events, feedback, and stored-file metadata. Original PDF bytes are not embedded in the JSON.
+Use **Export account data** to download `masari-account-export.json`. It includes the profile, CV text, paths, jobs, evidence, saved analyses and citations, interview practice history and progress, audit events, feedback, and stored-file metadata. Original PDF bytes are not embedded in the JSON.
 
 The hosted analysis function embeds these chunks with `text-embedding-3-small`, persists them in private pgvector-backed storage, retrieves the most relevant chunks, and returns structured skill findings with source labels such as `D1` and `D4`.
 
