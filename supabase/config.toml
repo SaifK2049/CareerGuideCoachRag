@@ -503,3 +503,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/shared-report/deno.json"
 entrypoint = "./functions/shared-report/index.ts"
+
+[functions.interview-transcribe]
+enabled = true
+verify_jwt = true
+import_map = "./functions/interview-transcribe/deno.json"
+entrypoint = "./functions/interview-transcribe/index.ts"

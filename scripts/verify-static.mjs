@@ -26,8 +26,10 @@ const [
   productMigration,
   cockpitMigration,
   interviewMigration,
+  interviewAssessmentMigration,
   cvGuidanceFunction,
   interviewFunction,
+  interviewTranscribeFunction,
   importJobFunction,
   sharedReportFunction,
   reportPage,
@@ -56,8 +58,10 @@ const [
   readFile(resolve(root, "supabase/migrations/20260718225738_product_workflows.sql"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260720174347_application_cockpit.sql"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260720193851_interview_preparation_gamification.sql"), "utf8"),
+  readFile(resolve(root, "supabase/migrations/20260720203957_interview_assessment_voice.sql"), "utf8"),
   readFile(resolve(root, "supabase/functions/cv-guidance/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/functions/interview-prep/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/interview-transcribe/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/functions/import-job/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/functions/shared-report/index.ts"), "utf8"),
   readFile(resolve(root, "report.html"), "utf8"),
@@ -118,7 +122,7 @@ for (const functionName of ["analyze-career", "create-checkout-session", "create
   const pattern = new RegExp(`\\[functions\\.${functionName}\\][\\s\\S]*?verify_jwt = true`);
   if (!pattern.test(supabaseConfig)) throw new Error(`${functionName} must require a user JWT`);
 }
-for (const functionName of ["cv-guidance", "import-job", "interview-prep"]) {
+for (const functionName of ["cv-guidance", "import-job", "interview-prep", "interview-transcribe"]) {
   const pattern = new RegExp(`\\[functions\\.${functionName}\\][\\s\\S]*?verify_jwt = true`);
   if (!pattern.test(supabaseConfig)) throw new Error(`${functionName} must require a user JWT`);
 }
@@ -239,6 +243,23 @@ if (
   throw new Error("Secure interview preparation and gamification flow is incomplete");
 }
 if (
+  !interviewAssessmentMigration.includes("reserve_interview_assessment_internal") ||
+  !interviewAssessmentMigration.includes("complete_interview_assessment") ||
+  !interviewAssessmentMigration.includes("invalidate_interview_assessment") ||
+  !interviewAssessmentMigration.includes("'premium', 'interview_voice', true") ||
+  !interviewFunction.includes('action === "assess"') ||
+  !interviewFunction.includes("practice-quality score") ||
+  !interviewTranscribeFunction.includes("gpt-4o-mini-transcribe") ||
+  !interviewTranscribeFunction.includes("PREMIUM_REQUIRED") ||
+  !interviewTranscribeFunction.includes("consumeRateLimit") ||
+  !interviewTranscribeFunction.includes("handleCors") ||
+  !app.includes("interviewAssessmentMarkup") ||
+  !app.includes("navigator.mediaDevices.getUserMedia") ||
+  !app.includes("Audio is transcribed and not stored")
+) {
+  throw new Error("Six-answer assessment or Premium microphone practice is incomplete");
+}
+if (
   !cvGuidanceFunction.includes("Never invent experience") ||
   !cvGuidanceFunction.includes("json_schema") ||
   !cvGuidanceFunction.includes("AI_NOT_CONFIGURED") ||
@@ -293,7 +314,7 @@ if (
 ) {
   throw new Error("A successful cited analysis must create one deduplicated action from its highest-priority finding");
 }
-if (!privacyNotice.includes("AI processing") || !betaTerms.includes("Private Beta Terms")) {
+if (!privacyNotice.includes("AI processing") || !privacyNotice.includes("does not store the audio file") || !betaTerms.includes("Private Beta Terms")) {
   throw new Error("Private-beta privacy and terms pages are missing");
 }
 if (/SERVICE_ROLE|SECRET_KEY/.test(app)) throw new Error("A server credential name appears in browser code");

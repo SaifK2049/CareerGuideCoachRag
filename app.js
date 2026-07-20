@@ -1,5 +1,5 @@
 const STORAGE_KEY = "career-rag-workspace-v1";
-const PRIVACY_NOTICE_VERSION = "2026-07-16";
+const PRIVACY_NOTICE_VERSION = "2026-07-20";
 const config = window.CAREER_RAG_CONFIG || {};
 const initialAuthLinkType = new URLSearchParams(window.location.hash.slice(1)).get("type")
   || new URLSearchParams(window.location.search).get("type")
@@ -135,6 +135,13 @@ let cvStarterActionPromise = null;
 const analysisActionPromises = new Map();
 let selectedInterviewSessionId = "";
 let selectedInterviewQuestion = 0;
+const pendingInterviewAssessments = new Map();
+let interviewRecorder = null;
+let interviewRecordingStream = null;
+let interviewRecordingChunks = [];
+let interviewRecordingStartedAt = 0;
+let interviewRecordingTimer = null;
+let interviewVoiceBusy = false;
 
 function loadState() {
   if (!config.localPreview) return emptyState();
@@ -963,7 +970,181 @@ function updateLocalInterviewGame(answerXp, completionXp) {
   profile.badges = [...existingBadges];
 }
 
+function localInterviewAssessment(practice, answers) {
+  const ordered = [...answers].sort(function(a, b) { return a.question_index - b.question_index; });
+  const detailed = ordered.filter(function(answer) { return answer.answer_text.trim().length >= 180; });
+  const concrete = ordered.filter(function(answer) {
+    return /\b\d+(?:[.,]\d+)?%?\b|\b(result|outcome|impact|measured|reduced|increased|delivered|saved)\b/i.test(answer.answer_text);
+  });
+  const structured = ordered.filter(function(answer) {
+    return /\b(situation|task|action|result|first|then|because|therefore|learned)\b/i.test(answer.answer_text);
+  });
+  const score = Math.max(48, Math.min(92, 50 + detailed.length * 4 + concrete.length * 3 + structured.length * 2));
+  const strengths = [];
+  const improvements = [];
+  if (detailed.length) strengths.push({ title: "Useful depth", detail: "You gave enough context to show how you approached the work, not only what happened.", question_indexes: detailed.slice(0, 3).map(function(answer) { return answer.question_index; }) });
+  if (concrete.length) strengths.push({ title: "Evidence-backed examples", detail: "Your answers include outcomes or concrete signals that make your contribution easier to trust.", question_indexes: concrete.slice(0, 3).map(function(answer) { return answer.question_index; }) });
+  if (structured.length) strengths.push({ title: "Clear reasoning", detail: "You used sequencing and cause-and-effect language that helps an interviewer follow your decisions.", question_indexes: structured.slice(0, 3).map(function(answer) { return answer.question_index; }) });
+  if (!strengths.length) strengths.push({ title: "Round completed", detail: "You answered every question, which gives you a complete baseline to improve from.", question_indexes: [0, 1, 2, 3, 4, 5] });
+  const short = ordered.filter(function(answer) { return answer.answer_text.trim().length < 180; });
+  const vague = ordered.filter(function(answer) { return !concrete.includes(answer); });
+  if (short.length) improvements.push({ title: "Add decision detail", detail: "Explain the constraint, the action you personally took, and why you chose it. Aim for one focused example rather than a general claim.", question_indexes: short.slice(0, 3).map(function(answer) { return answer.question_index; }) });
+  if (vague.length) improvements.push({ title: "Make outcomes concrete", detail: "Close with an observable result: a number, delivery milestone, stakeholder change, or lesson you applied later.", question_indexes: vague.slice(0, 3).map(function(answer) { return answer.question_index; }) });
+  if (improvements.length < 2) improvements.push({ title: "Tighten the opening", detail: "Lead with the situation and your responsibility in one sentence, then spend most of the answer on your decisions and impact.", question_indexes: [0, 1] });
+  return {
+    score: score,
+    verdict: score >= 82 ? "strong" : score >= 68 ? "solid" : "developing",
+    summary: score >= 82 ? "A convincing practice round with specific examples and a clear account of your contribution." : score >= 68 ? "A solid practice round. Your core examples work; sharper evidence and tighter structure would make them more persuasive." : "You have a useful first draft. Focus next on specific actions, decisions, and observable outcomes.",
+    strengths: strengths.slice(0, 3),
+    improvements: improvements.slice(0, 3),
+    next_practice: {
+      focus: improvements[0].title,
+      exercise: "Choose the two referenced answers and rehearse each in 90 seconds: 15 seconds of context, 50 seconds on your actions and decisions, and 25 seconds on the result and learning."
+    }
+  };
+}
+
+async function ensureInterviewAssessment(sessionId, force) {
+  if (pendingInterviewAssessments.has(sessionId)) return pendingInterviewAssessments.get(sessionId);
+  const practice = state.interviewSessions.find(function(item) { return item.id === sessionId; });
+  if (!practice || practice.status !== "completed" || (!force && practice.assessment_status === "succeeded")) return;
+  const task = (async function() {
+    practice.assessment_status = "pending";
+    practice.assessment_failure_code = null;
+    renderInterviewPractice();
+    try {
+      if (config.localPreview) {
+        const answers = state.interviewAnswers.filter(function(item) { return item.session_id === sessionId; });
+        practice.assessment = localInterviewAssessment(practice, answers);
+        practice.assessment_status = "succeeded";
+        practice.assessed_at = new Date().toISOString();
+        saveState();
+      } else {
+        const result = await cloud.functions.invoke("interview-prep", { body: { action: "assess", sessionId: sessionId } });
+        if (result.error) throw result.error;
+        await loadCloudState();
+      }
+      renderInterviewPractice();
+      toast("Your six-answer review is ready");
+    } catch (error) {
+      const current = state.interviewSessions.find(function(item) { return item.id === sessionId; });
+      if (current) current.assessment_status = "failed";
+      renderInterviewPractice();
+      toast(await functionErrorMessage(error, "Your answer review could not be created"));
+    } finally {
+      pendingInterviewAssessments.delete(sessionId);
+    }
+  })();
+  pendingInterviewAssessments.set(sessionId, task);
+  return task;
+}
+
+function recordingMimeType() {
+  if (!window.MediaRecorder) return "";
+  return ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find(function(type) {
+    return typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(type);
+  }) || "";
+}
+
+function finishInterviewRecordingStream() {
+  clearInterval(interviewRecordingTimer);
+  interviewRecordingTimer = null;
+  if (interviewRecordingStream) interviewRecordingStream.getTracks().forEach(function(track) { track.stop(); });
+  interviewRecordingStream = null;
+}
+
+function stopInterviewRecording() {
+  if (interviewRecorder && interviewRecorder.state === "recording") interviewRecorder.stop();
+  finishInterviewRecordingStream();
+}
+
+async function transcribeInterviewRecording(blob, question) {
+  const stage = document.getElementById("interviewStage");
+  const status = stage.querySelector("#interviewRecordingStatus");
+  const button = stage.querySelector("#interviewRecordButton");
+  if (status) status.textContent = "Transcribing your answer…";
+  if (button) button.disabled = true;
+  try {
+    const extension = blob.type.includes("mp4") ? "m4a" : "webm";
+    const form = new FormData();
+    form.append("audio", new File([blob], "interview-answer." + extension, { type: blob.type.split(";")[0] }), "interview-answer." + extension);
+    form.append("question", question.question);
+    const response = await fetch(config.supabaseUrl + "/functions/v1/interview-transcribe", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + session.access_token, apikey: config.supabasePublishableKey },
+      body: form
+    });
+    const payload = await response.json().catch(function() { return {}; });
+    if (!response.ok) throw new Error(payload.error || "The recording could not be transcribed");
+    const textarea = stage.querySelector("#interviewAnswer");
+    if (!textarea) return;
+    textarea.value = textarea.value.trim() ? textarea.value.trim() + "\n\n" + payload.transcript : payload.transcript;
+    textarea.focus();
+    status.textContent = "Transcript added. Review it before saving.";
+    toast("Transcript ready to edit");
+  } catch (error) {
+    if (status) status.textContent = error.message || "The recording could not be transcribed.";
+    toast(error.message || "The recording could not be transcribed");
+  } finally {
+    interviewVoiceBusy = false;
+    if (button) { button.disabled = false; button.textContent = "Record answer"; button.classList.remove("is-recording"); }
+  }
+}
+
+async function startInterviewRecording(question) {
+  const stage = document.getElementById("interviewStage");
+  const button = stage.querySelector("#interviewRecordButton");
+  const status = stage.querySelector("#interviewRecordingStatus");
+  if (interviewRecorder && interviewRecorder.state === "recording") { stopInterviewRecording(); return; }
+  try {
+    const mimeType = recordingMimeType();
+    interviewRecordingStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+    interviewRecordingChunks = [];
+    interviewRecorder = mimeType ? new MediaRecorder(interviewRecordingStream, { mimeType: mimeType }) : new MediaRecorder(interviewRecordingStream);
+    interviewRecorder.ondataavailable = function(event) { if (event.data.size) interviewRecordingChunks.push(event.data); };
+    interviewRecorder.onstop = function() {
+      const blob = new Blob(interviewRecordingChunks, { type: interviewRecorder.mimeType || mimeType || "audio/webm" });
+      finishInterviewRecordingStream();
+      interviewRecorder = null;
+      if (blob.size >= 1000) transcribeInterviewRecording(blob, question);
+      else {
+        interviewVoiceBusy = false;
+        button.textContent = "Record answer";
+        button.classList.remove("is-recording");
+        if (status) status.textContent = "No audio was captured. Try again.";
+      }
+    };
+    interviewRecordingStartedAt = Date.now();
+    interviewVoiceBusy = true;
+    interviewRecorder.start(1000);
+    button.textContent = "Stop recording";
+    button.classList.add("is-recording");
+    status.textContent = "Recording · 0:00 of 2:00";
+    interviewRecordingTimer = setInterval(function() {
+      const elapsed = Math.floor((Date.now() - interviewRecordingStartedAt) / 1000);
+      if (status) status.textContent = "Recording · " + Math.floor(elapsed / 60) + ":" + String(elapsed % 60).padStart(2, "0") + " of 2:00";
+      if (elapsed >= 120) stopInterviewRecording();
+    }, 500);
+  } catch (error) {
+    interviewVoiceBusy = false;
+    finishInterviewRecordingStream();
+    if (status) status.textContent = error && error.name === "NotAllowedError" ? "Microphone permission was not granted. You can still type your answer." : "The microphone is not available. You can still type your answer.";
+  }
+}
+
+function interviewAssessmentMarkup(practice) {
+  if (practice.status !== "completed") return "";
+  const status = practice.assessment_status || "not_started";
+  if (status === "pending") return '<section class="interview-assessment is-pending" aria-live="polite"><p class="eyebrow">Round review</p><h3>Reviewing your six answers…</h3><p>Masari is looking for relevance, evidence, structure, judgement, and reflection.</p></section>';
+  if (status !== "succeeded" || !practice.assessment) return '<section class="interview-assessment"><p class="eyebrow">Round review</p><h3>' + (status === "failed" ? "Your review needs another try" : "Your six answers are ready to review") + '</h3><p>The review evaluates your answer content and gives you a focused next practice exercise.</p><button type="button" class="button button-dark" data-generate-interview-feedback>Generate my feedback</button></section>';
+  const review = practice.assessment;
+  function references(item) { return (item.question_indexes || []).map(function(index) { return "Q" + (Number(index) + 1); }).join(", "); }
+  function points(items) { return (items || []).map(function(item) { return '<li><strong>' + safe(item.title) + '</strong><p>' + safe(item.detail) + '</p><span>' + safe(references(item)) + '</span></li>'; }).join(""); }
+  return '<section class="interview-assessment"><div class="interview-assessment-head"><div><p class="eyebrow">Round review</p><h3>' + Number(review.score) + '/100 · ' + safe(review.verdict) + '</h3></div><small>Practice quality, not hiring probability</small></div><p class="interview-assessment-summary">' + safe(review.summary) + '</p><div class="interview-assessment-columns"><div><h4>What worked</h4><ul>' + points(review.strengths) + '</ul></div><div><h4>What to improve</h4><ul>' + points(review.improvements) + '</ul></div></div><div class="interview-next-practice"><strong>Next practice · ' + safe(review.next_practice && review.next_practice.focus || "Focused rehearsal") + '</strong><p>' + safe(review.next_practice && review.next_practice.exercise || "Rehearse the answers above with a clear action and measurable result.") + '</p></div><p class="interview-assessment-scope">Feedback assesses the written transcript only. It does not judge accent, voice, personality, protected traits, or employability.</p></section>';
+}
+
 async function generateInterviewPractice() {
+  if (interviewVoiceBusy) { toast("Finish the voice transcript before generating another round"); return; }
   const select = document.getElementById("interviewJobSelect");
   const button = document.getElementById("generateInterviewButton");
   const record = applicationRecords().find(function(item) { return item.job.id === select.value; });
@@ -1017,6 +1198,11 @@ async function saveInterviewAnswer(sessionId, questionIndex, answerText, selfRat
       if (existing) {
         existing.answer_text = answerText.trim();
         existing.self_rating = selfRating;
+        if (practice.assessment_status === "succeeded") {
+          practice.assessment_status = "not_started";
+          practice.assessment = null;
+          practice.assessed_at = null;
+        }
       } else {
         answerXp = 10 + (answerText.trim().length >= 150 ? 5 : 0);
         state.interviewAnswers.push({ id: crypto.randomUUID(), session_id: sessionId, question_index: questionIndex, answer_text: answerText.trim(), self_rating: selfRating, earned_xp: answerXp });
@@ -1031,6 +1217,7 @@ async function saveInterviewAnswer(sessionId, questionIndex, answerText, selfRat
       render();
       toast(completionXp ? "Round complete · +" + (answerXp + completionXp) + " XP"
         : answerXp ? "Answer saved · +" + answerXp + " XP" : "Answer updated");
+      if (completionXp) ensureInterviewAssessment(sessionId);
       return;
     }
     const result = await cloud.rpc("record_interview_answer", {
@@ -1046,6 +1233,7 @@ async function saveInterviewAnswer(sessionId, questionIndex, answerText, selfRat
     toast(award.session_completed
       ? "Round complete · +" + (Number(award.answer_xp || 0) + Number(award.completion_xp || 0)) + " XP"
       : "Answer saved" + (award.answer_xp ? " · +" + award.answer_xp + " XP" : ""));
+    if (award.session_completed) ensureInterviewAssessment(sessionId);
   } catch (error) {
     toast(error.message || "Your answer could not be saved");
   } finally {
@@ -1093,6 +1281,7 @@ function renderInterviewPractice() {
   }).join("") : '<p class="interview-empty-copy">Your generated rounds will appear here.</p>';
   list.querySelectorAll("[data-interview-session]").forEach(function(button) {
     button.onclick = function() {
+      if (interviewVoiceBusy) { toast("Stop the recording and wait for its transcript before changing rounds"); return; }
       selectedInterviewSessionId = button.dataset.interviewSession;
       const practiceAnswers = state.interviewAnswers.filter(function(item) { return item.session_id === selectedInterviewSessionId; });
       const sessionItem = sessions.find(function(item) { return item.id === selectedInterviewSessionId; });
@@ -1122,26 +1311,49 @@ function renderInterviewPractice() {
   const answers = state.interviewAnswers.filter(function(item) { return item.session_id === practice.id; });
   const answer = answers.find(function(item) { return item.question_index === selectedInterviewQuestion; });
   const sources = new Map((practice.source_context || []).map(function(source) { return [source.label, source.title]; }));
+  const voiceFeature = accountAccess.features && accountAccess.features.interview_voice;
+  const voiceAllowed = accountAccess.plan === "premium" && voiceFeature && voiceFeature.enabled;
+  const recordingSupported = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  const voiceButton = voiceAllowed
+    ? '<button type="button" class="button button-light" id="interviewRecordButton"' + (recordingSupported ? "" : " disabled") + '>Record answer</button>'
+    : '<button type="button" class="button button-light" id="interviewPremiumVoiceButton">Microphone · Premium</button>';
+  const voiceStatus = voiceAllowed
+    ? (recordingSupported ? "Up to 2 minutes. Audio is transcribed and not stored." : "Recording is not supported in this browser. You can still type your answer.")
+    : "Upgrade to practise aloud and turn your recording into an editable transcript.";
   stage.innerHTML = '<div class="interview-stage-head"><div><span>' + safe(practice.title) + (practice.company ? " · " + safe(practice.company) : "") + '</span><h3>Question ' + (selectedInterviewQuestion + 1) + " of " + questions.length + '</h3></div><strong>' + Number(practice.answered_count || 0) + "/" + questions.length + " complete</strong></div>"
     + '<div class="interview-question-progress">' + questions.map(function(_item, index) { return '<button type="button" class="' + (index === selectedInterviewQuestion ? "is-current" : answers.some(function(saved) { return saved.question_index === index; }) ? "is-done" : "") + '" data-interview-question="' + index + '" aria-label="Open question ' + (index + 1) + '"></button>'; }).join("") + '</div>'
+    + interviewAssessmentMarkup(practice)
     + '<article class="interview-question"><div class="interview-question-meta"><span>' + safe(question.category) + '</span><span>' + safe(question.difficulty) + '</span></div><h2>' + safe(question.question) + '</h2><p>' + safe(question.why_it_matters) + '</p></article>'
-    + '<form id="interviewAnswerForm"><label class="field-label" for="interviewAnswer">Practise your answer</label><textarea class="textarea" id="interviewAnswer" rows="9" maxlength="8000" placeholder="Write the answer you would give aloud. Specific examples earn the strongest practice value.">' + safe(answer && answer.answer_text || "") + '</textarea><div class="interview-rating"><label class="field-label" for="interviewRating">How confident did that feel?</label><select class="input" id="interviewRating"><option value="1">1 · I struggled</option><option value="2">2 · Needs work</option><option value="3">3 · Getting there</option><option value="4">4 · Strong</option><option value="5">5 · Ready to say aloud</option></select></div><div class="form-actions"><button type="button" class="button button-light" id="previousInterviewQuestion"' + (selectedInterviewQuestion === 0 ? " disabled" : "") + '>Previous</button><button type="submit" class="button button-dark" id="saveInterviewAnswerButton">' + (answer ? "Update answer" : "Save answer") + '</button><button type="button" class="button button-light" id="nextInterviewQuestion"' + (selectedInterviewQuestion === questions.length - 1 ? " disabled" : "") + '>Next</button></div></form>'
+    + '<form id="interviewAnswerForm"><div class="interview-answer-heading"><label class="field-label" for="interviewAnswer">Practise your answer</label><div class="interview-voice-controls">' + voiceButton + '<span id="interviewRecordingStatus" aria-live="polite">' + safe(voiceStatus) + '</span></div></div><textarea class="textarea" id="interviewAnswer" rows="9" maxlength="8000" placeholder="Write the answer you would give aloud. Specific examples earn the strongest practice value.">' + safe(answer && answer.answer_text || "") + '</textarea><div class="interview-rating"><label class="field-label" for="interviewRating">How confident did that feel?</label><select class="input" id="interviewRating"><option value="1">1 · I struggled</option><option value="2">2 · Needs work</option><option value="3">3 · Getting there</option><option value="4">4 · Strong</option><option value="5">5 · Ready to say aloud</option></select></div><div class="form-actions"><button type="button" class="button button-light" id="previousInterviewQuestion"' + (selectedInterviewQuestion === 0 ? " disabled" : "") + '>Previous</button><button type="submit" class="button button-dark" id="saveInterviewAnswerButton">' + (answer ? "Update answer" : "Save answer") + '</button><button type="button" class="button button-light" id="nextInterviewQuestion"' + (selectedInterviewQuestion === questions.length - 1 ? " disabled" : "") + '>Next</button></div></form>'
     + (answer ? '<section class="interview-coaching"><p class="eyebrow">Answer coaching</p><h3>A structure to rehearse</h3><p>' + safe(question.answer_framework) + '</p><h4>Evidence to bring in</h4><ul>' + question.evidence_prompts.map(function(prompt) { return "<li>" + safe(prompt) + "</li>"; }).join("") + '</ul><div class="interview-sources">Grounded in ' + question.evidence_labels.map(function(label) { return "<span>" + safe(sources.get(label) || label) + "</span>"; }).join("") + "</div></section>" : '<p class="interview-coaching-note">Save an answer to reveal a role-specific structure and evidence prompts.</p>');
   stage.querySelector("#interviewRating").value = String(answer && answer.self_rating || 3);
   stage.querySelectorAll("[data-interview-question]").forEach(function(button) {
-    button.onclick = function() { selectedInterviewQuestion = Number(button.dataset.interviewQuestion); renderInterviewPractice(); };
+    button.onclick = function() { if (interviewVoiceBusy) { toast("Finish the voice transcript before changing questions"); return; } selectedInterviewQuestion = Number(button.dataset.interviewQuestion); renderInterviewPractice(); };
   });
   stage.querySelector("#previousInterviewQuestion").onclick = function() {
+    if (interviewVoiceBusy) { toast("Finish the voice transcript before changing questions"); return; }
     selectedInterviewQuestion = Math.max(0, selectedInterviewQuestion - 1);
     renderInterviewPractice();
   };
   stage.querySelector("#nextInterviewQuestion").onclick = function() {
+    if (interviewVoiceBusy) { toast("Finish the voice transcript before changing questions"); return; }
     selectedInterviewQuestion = Math.min(questions.length - 1, selectedInterviewQuestion + 1);
     renderInterviewPractice();
   };
   stage.querySelector("#interviewAnswerForm").onsubmit = function(event) {
     event.preventDefault();
+    if (interviewVoiceBusy) { toast("Stop the recording and wait for its transcript before saving"); return; }
     saveInterviewAnswer(practice.id, selectedInterviewQuestion, stage.querySelector("#interviewAnswer").value, Number(stage.querySelector("#interviewRating").value));
+  };
+  const feedbackButton = stage.querySelector("[data-generate-interview-feedback]");
+  if (feedbackButton) feedbackButton.onclick = function() { ensureInterviewAssessment(practice.id, true); };
+  const recordButton = stage.querySelector("#interviewRecordButton");
+  if (recordButton) recordButton.onclick = function() { startInterviewRecording(question); };
+  const premiumVoiceButton = stage.querySelector("#interviewPremiumVoiceButton");
+  if (premiumVoiceButton) premiumVoiceButton.onclick = async function() {
+    if (!billingEnabled) { toast("Microphone practice is included with Premium when billing is enabled"); return; }
+    try { await openBilling(); }
+    catch (error) { toast(await functionErrorMessage(error, "Premium checkout could not be opened")); }
   };
 }
 
@@ -1604,6 +1816,7 @@ async function extractPdf(file) {
 }
 
 function setView(view) {
+  if (interviewVoiceBusy) { toast("Finish the voice transcript before changing views"); return; }
   activeView = view;
   document.querySelectorAll(".view").forEach(function(section) { section.classList.toggle("is-visible", section.id === view + "View"); });
   document.querySelectorAll(".nav-item").forEach(function(button) { button.classList.toggle("is-active", button.dataset.view === view); });

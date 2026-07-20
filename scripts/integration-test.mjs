@@ -331,6 +331,65 @@ try {
     },
   });
   assert.equal(repeatedAnswer.data.answer_xp, 0, "editing an answer must not award XP again");
+  const assessmentFixture = {
+    score: 78,
+    verdict: "solid",
+    summary: "The examples are relevant and would improve with more measurable outcomes.",
+    strengths: [
+      { title: "Relevant examples", detail: "The answers stay connected to the role.", question_indexes: [0, 1] },
+      { title: "Clear decisions", detail: "The candidate explains several personal choices.", question_indexes: [2, 5] },
+    ],
+    improvements: [
+      { title: "Quantify outcomes", detail: "Add observable results to the examples.", question_indexes: [1, 3] },
+      { title: "Tighten structure", detail: "Spend less time on context and more on actions.", question_indexes: [0, 4] },
+    ],
+    next_practice: { focus: "Measurable impact", exercise: "Rehearse questions 2 and 4 with one concrete result each." },
+  };
+  const reservedAssessment = await rest("rpc/reserve_interview_assessment", alice, {
+    method: "POST",
+    body: { p_session_id: interviewSessionId },
+  });
+  assert.equal(reservedAssessment.response.status, 200, JSON.stringify(reservedAssessment.data));
+  assert.equal(reservedAssessment.data.state, "reserved");
+  const pendingAssessment = await rest("rpc/reserve_interview_assessment", alice, {
+    method: "POST",
+    body: { p_session_id: interviewSessionId },
+  });
+  assert.equal(pendingAssessment.data.state, "pending", "assessment reservation must be idempotent while in progress");
+  const bobCannotAssessAlice = await rest("rpc/reserve_interview_assessment", bob, {
+    method: "POST",
+    body: { p_session_id: interviewSessionId },
+  });
+  assert.equal(bobCannotAssessAlice.response.ok, false, "another user cannot assess an owned session");
+  const completedAssessment = await serviceRest("rpc/complete_interview_assessment", {
+    method: "POST",
+    body: { p_user_id: alice.id, p_session_id: interviewSessionId, p_assessment: assessmentFixture, p_model: "integration-model" },
+  });
+  assert.equal(completedAssessment.response.status, 200, JSON.stringify(completedAssessment.data));
+  const replayedAssessment = await rest("rpc/reserve_interview_assessment", alice, {
+    method: "POST",
+    body: { p_session_id: interviewSessionId },
+  });
+  assert.equal(replayedAssessment.data.state, "succeeded");
+  assert.equal(replayedAssessment.data.assessment.score, 78);
+  const answerEditInvalidatesAssessment = await rest("rpc/record_interview_answer", alice, {
+    method: "POST",
+    body: { p_session_id: interviewSessionId, p_question_index: 0, p_answer_text: "A more specific updated answer with a measurable result of 20 percent.", p_self_rating: 4 },
+  });
+  assert.equal(answerEditInvalidatesAssessment.response.status, 200, JSON.stringify(answerEditInvalidatesAssessment.data));
+  const invalidatedSession = await rest(`interview_practice_sessions?id=eq.${interviewSessionId}&select=assessment_status,assessment`, alice);
+  assert.equal(invalidatedSession.data[0].assessment_status, "not_started");
+  assert.deepEqual(invalidatedSession.data[0].assessment, {});
+  const reReservedAssessment = await rest("rpc/reserve_interview_assessment", alice, {
+    method: "POST",
+    body: { p_session_id: interviewSessionId },
+  });
+  assert.equal(reReservedAssessment.data.state, "reserved");
+  const reCompletedAssessment = await serviceRest("rpc/complete_interview_assessment", {
+    method: "POST",
+    body: { p_user_id: alice.id, p_session_id: interviewSessionId, p_assessment: assessmentFixture, p_model: "integration-model" },
+  });
+  assert.equal(reCompletedAssessment.response.status, 200, JSON.stringify(reCompletedAssessment.data));
   const gameProfile = await rest(`interview_game_profiles?user_id=eq.${alice.id}&select=*`, alice);
   assert.equal(gameProfile.data[0].total_xp, 110);
   assert.equal(gameProfile.data[0].questions_answered, 6);
@@ -740,6 +799,16 @@ try {
   });
   assert.equal(unconfiguredInterview.response.status, 503, JSON.stringify(unconfiguredInterview.data));
   assert.equal(unconfiguredInterview.data.code, "AI_NOT_CONFIGURED");
+  const freeVoiceForm = new FormData();
+  freeVoiceForm.append("audio", new File([new Uint8Array(1200)], "answer.webm", { type: "audio/webm" }));
+  const freeVoiceResponse = await fetch(`${baseUrl}/functions/v1/interview-transcribe`, {
+    method: "POST",
+    headers: { apikey: anonKey, Authorization: `Bearer ${alice.token}` },
+    body: freeVoiceForm,
+  });
+  const freeVoicePayload = await freeVoiceResponse.json();
+  assert.equal(freeVoiceResponse.status, 402, JSON.stringify(freeVoicePayload));
+  assert.equal(freeVoicePayload.code, "PREMIUM_REQUIRED");
 
   for (let index = 0; index < 5; index += 1) {
     const checkoutAttempt = await request("/functions/v1/create-checkout-session", {
@@ -772,6 +841,8 @@ try {
   assert.equal(exportResult.data.cv_guidance.length, 1);
   assert.equal(exportResult.data.shared_reports.length, 1);
   assert.equal(exportResult.data.interview_practice_sessions.length, 1);
+  assert.equal(exportResult.data.interview_practice_sessions[0].assessment_status, "succeeded");
+  assert.equal(exportResult.data.interview_practice_sessions[0].assessment.score, 78);
   assert.equal(exportResult.data.interview_practice_answers.length, 6);
   assert.equal(exportResult.data.interview_game_profile.total_xp, 110);
   assert.equal("token_hash" in exportResult.data.shared_reports[0], false);

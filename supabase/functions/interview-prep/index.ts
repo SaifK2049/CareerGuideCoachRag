@@ -12,6 +12,15 @@ type Question = {
   evidence_labels: string[];
 };
 
+type InterviewAssessment = {
+  score: number;
+  verdict: "developing" | "solid" | "strong";
+  summary: string;
+  strengths: Array<{ title: string; detail: string; question_indexes: number[] }>;
+  improvements: Array<{ title: string; detail: string; question_indexes: number[] }>;
+  next_practice: { focus: string; exercise: string };
+};
+
 class InterviewError extends Error {
   constructor(public code: string, public status: number, message: string) {
     super(message);
@@ -69,6 +78,184 @@ function normalizeQuestions(value: unknown, validLabels: Set<string>): Question[
   });
 }
 
+function normalizeAssessment(value: unknown, questionCount: number): InterviewAssessment {
+  const result = value as Record<string, unknown>;
+  const score = Number(result?.score);
+  const verdict = String(result?.verdict || "");
+  const summary = String(result?.summary || "").trim();
+  const normalizePoints = (input: unknown) => Array.isArray(input) ? input.map((entry) => {
+    const item = entry as Record<string, unknown>;
+    const title = String(item.title || "").trim();
+    const detail = String(item.detail || "").trim();
+    const indexes = Array.isArray(item.question_indexes)
+      ? [...new Set(item.question_indexes.map(Number).filter((index) => Number.isInteger(index) && index >= 0 && index < questionCount))]
+      : [];
+    if (!title || title.length > 160 || !detail || detail.length > 1200 || !indexes.length) {
+      throw new InterviewError("INVALID_AI_RESPONSE", 502, "The interview feedback could not be verified.");
+    }
+    return { title, detail, question_indexes: indexes };
+  }) : [];
+  const strengths = normalizePoints(result?.strengths);
+  const improvements = normalizePoints(result?.improvements);
+  const next = result?.next_practice as Record<string, unknown> | undefined;
+  const focus = String(next?.focus || "").trim();
+  const exercise = String(next?.exercise || "").trim();
+  if (
+    !Number.isInteger(score) || score < 0 || score > 100 ||
+    !["developing", "solid", "strong"].includes(verdict) ||
+    !summary || summary.length > 2000 ||
+    strengths.length < 2 || strengths.length > 4 ||
+    improvements.length < 2 || improvements.length > 4 ||
+    !focus || focus.length > 500 || !exercise || exercise.length > 1000
+  ) {
+    throw new InterviewError("INVALID_AI_RESPONSE", 502, "The interview feedback could not be verified.");
+  }
+  return {
+    score,
+    verdict: verdict as InterviewAssessment["verdict"],
+    summary,
+    strengths,
+    improvements,
+    next_practice: { focus, exercise },
+  };
+}
+
+async function assessInterview(
+  request: Request,
+  userClient: any,
+  admin: any,
+  userId: string,
+  sessionId: string,
+) {
+  if (!uuidPattern.test(sessionId)) {
+    throw new InterviewError("INVALID_REQUEST", 400, "Choose a valid completed practice round.");
+  }
+  const apiKey = Deno.env.get("OPENAI_API_KEY") || Deno.env.get("OPENAI_AI_KEY") || "";
+  if (!apiKey) throw new InterviewError("AI_NOT_CONFIGURED", 503, "AI interview feedback is not configured yet.");
+
+  const { data: reservation, error: reservationError } = await userClient.rpc("reserve_interview_assessment", {
+    p_session_id: sessionId,
+  });
+  if (reservationError) throw new InterviewError("ASSESSMENT_NOT_READY", 422, reservationError.message);
+  const state = String(reservation?.state || "");
+  if (state === "succeeded") {
+    return jsonResponse(request, { assessment: reservation.assessment, replayed: true });
+  }
+  if (state === "pending") {
+    throw new InterviewError("ASSESSMENT_IN_PROGRESS", 409, "Your round feedback is already being prepared.");
+  }
+  if (state !== "reserved") throw new InterviewError("ASSESSMENT_NOT_READY", 422, "Complete every answer before requesting feedback.");
+
+  try {
+    const [{ data: practice, error: practiceError }, { data: answers, error: answersError }] = await Promise.all([
+      userClient.from("interview_practice_sessions")
+        .select("id,title,company,questions,status,answered_count")
+        .eq("id", sessionId)
+        .single(),
+      userClient.from("interview_practice_answers")
+        .select("question_index,answer_text,self_rating")
+        .eq("session_id", sessionId)
+        .order("question_index"),
+    ]);
+    if (practiceError || answersError || !practice) throw new InterviewError("CONTEXT_UNAVAILABLE", 500, "The completed round could not be loaded.");
+    const questions = Array.isArray(practice.questions) ? practice.questions : [];
+    if (!questions.length || !Array.isArray(answers) || answers.length !== questions.length) {
+      throw new InterviewError("ASSESSMENT_NOT_READY", 422, "Complete every answer before requesting feedback.");
+    }
+
+    const model = Deno.env.get("OPENAI_MODEL") || "gpt-5-mini";
+    const transcript = questions.map((question: Record<string, unknown>, index: number) => {
+      const answer = answers.find((item: Record<string, unknown>) => Number(item.question_index) === index);
+      return `Question ${index + 1}: ${String(question.question || "")}\nAnswer: ${String(answer?.answer_text || "")}\nSelf-rating: ${Number(answer?.self_rating || 0)}/5`;
+    }).join("\n\n");
+    let response: Response;
+    try {
+      response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+        model,
+        instructions: "You are a rigorous but constructive interview coach. Evaluate only the content of the six written or transcribed answers: relevance, specificity, evidence, structure, judgement, and reflection. Do not infer voice delivery, accent, fluency, personality, protected traits, or hiring likelihood. Treat the score as a practice-quality score, not a probability of employment. Cite question indexes for every strength and improvement. Give specific, actionable feedback without inventing candidate experience.",
+        input: `Role: ${String(practice.title || "Target role")} at ${String(practice.company || "target company")}\n\n${transcript}`,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "interview_round_assessment",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["score", "verdict", "summary", "strengths", "improvements", "next_practice"],
+              properties: {
+                score: { type: "integer", minimum: 0, maximum: 100 },
+                verdict: { type: "string", enum: ["developing", "solid", "strong"] },
+                summary: { type: "string" },
+                strengths: {
+                  type: "array", minItems: 2, maxItems: 4,
+                  items: {
+                    type: "object", additionalProperties: false,
+                    required: ["title", "detail", "question_indexes"],
+                    properties: {
+                      title: { type: "string" }, detail: { type: "string" },
+                      question_indexes: { type: "array", minItems: 1, items: { type: "integer", minimum: 0, maximum: 5 } },
+                    },
+                  },
+                },
+                improvements: {
+                  type: "array", minItems: 2, maxItems: 4,
+                  items: {
+                    type: "object", additionalProperties: false,
+                    required: ["title", "detail", "question_indexes"],
+                    properties: {
+                      title: { type: "string" }, detail: { type: "string" },
+                      question_indexes: { type: "array", minItems: 1, items: { type: "integer", minimum: 0, maximum: 5 } },
+                    },
+                  },
+                },
+                next_practice: {
+                  type: "object", additionalProperties: false,
+                  required: ["focus", "exercise"],
+                  properties: { focus: { type: "string" }, exercise: { type: "string" } },
+                },
+              },
+            },
+          },
+        },
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+    } catch {
+      throw new InterviewError("AI_UNAVAILABLE", 503, "Interview feedback is temporarily unavailable.");
+    }
+    if (!response.ok) throw new InterviewError("AI_UNAVAILABLE", 503, "Interview feedback is temporarily unavailable.");
+    const result = await response.json() as Record<string, any>;
+    const text = outputText(result);
+    if (!text) throw new InterviewError("AI_REFUSED", 422, "Feedback could not be created from these answers.");
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); }
+    catch { throw new InterviewError("INVALID_AI_RESPONSE", 502, "The interview feedback could not be verified."); }
+    const assessment = normalizeAssessment(parsed, questions.length);
+    const { data: completed, error: completeError } = await admin.rpc("complete_interview_assessment", {
+      p_user_id: userId,
+      p_session_id: sessionId,
+      p_assessment: assessment,
+      p_model: model,
+    });
+    if (completeError || !completed) throw new InterviewError("ASSESSMENT_SAVE_FAILED", 500, "The interview feedback could not be saved.");
+    console.log(JSON.stringify({ event: "interview_assessment_completed", session_id: sessionId, score: assessment.score, timestamp: new Date().toISOString() }));
+    return jsonResponse(request, { assessment, practice: completed });
+  } catch (error) {
+    const code = error instanceof InterviewError ? error.code : "ASSESSMENT_FAILED";
+    const { error: failError } = await admin.rpc("fail_interview_assessment", {
+      p_user_id: userId,
+      p_session_id: sessionId,
+      p_failure_code: code,
+    });
+    if (failError) console.error(JSON.stringify({ event: "interview_assessment_fail_state_failed" }));
+    throw error;
+  }
+}
+
 Deno.serve(async (request) => {
   const corsResult = handleCors(request);
   if (corsResult) return corsResult;
@@ -94,9 +281,14 @@ Deno.serve(async (request) => {
       throw new InterviewError("INVALID_SESSION", 401, "Your session is no longer valid.");
     }
 
-    const payload = await request.json() as { jobId?: string };
+    const payload = await request.json() as { action?: string; jobId?: string; sessionId?: string };
+    const action = String(payload.action || "generate");
+    if (!new Set(["generate", "assess"]).has(action)) {
+      throw new InterviewError("INVALID_REQUEST", 400, "This interview action is not supported.");
+    }
+    const sessionId = String(payload.sessionId || "");
     const jobId = String(payload.jobId || "");
-    if (!uuidPattern.test(jobId)) {
+    if (action === "generate" && !uuidPattern.test(jobId)) {
       throw new InterviewError("INVALID_REQUEST", 400, "Choose a valid job to practise.");
     }
 
@@ -105,10 +297,11 @@ Deno.serve(async (request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { autoRefreshToken: false, persistSession: false } },
     );
-    const rateLimit = await consumeRateLimit(admin, userId, "interview-prep", 4, 600);
+    const rateLimit = await consumeRateLimit(admin, userId, action === "assess" ? "interview-assessment" : "interview-prep", action === "assess" ? 6 : 4, 600);
     if (!rateLimit.allowed) {
       return rateLimitResponse(rateLimit, Object.fromEntries(jsonResponse(request, {}).headers.entries()));
     }
+    if (action === "assess") return await assessInterview(request, userClient, admin, userId, sessionId);
 
     const [{ data: job, error: jobError }, { data: profile, error: profileError }, { data: evidence, error: evidenceError }, { data: access, error: accessError }, { data: usage, error: usageError }] =
       await Promise.all([

@@ -8,7 +8,7 @@ A private, multi-user career intelligence workspace configured for a free, invit
 - adding explicit knowledge evidence;
 - measuring recurring job-skill demand against CV and knowledge evidence;
 - running saved, cited RAG analysis with idempotent quota handling;
-- generating job-specific interview rounds with answer coaching, XP, streaks, and achievements;
+- generating job-specific interview rounds with six-answer feedback, Premium voice transcription, answer coaching, XP, streaks, and achievements;
 - exporting a portable JSON copy of the account;
 - submitting privacy-safe beta feedback.
 
@@ -43,11 +43,13 @@ Production mode requires Supabase configuration and starts at the authentication
    ```bash
    npx supabase secrets set OPENAI_API_KEY=YOUR_KEY
    npx supabase secrets set OPENAI_MODEL=gpt-5-mini
+   npx supabase secrets set OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
    npx supabase secrets set TURNSTILE_SECRET_KEY=YOUR_PRIVATE_TURNSTILE_SECRET
    npx supabase secrets set APP_URL=https://app.example.com
    npx supabase secrets set ALLOWED_ORIGINS=https://app.example.com
    npx supabase functions deploy analyze-career
    npx supabase functions deploy interview-prep
+   npx supabase functions deploy interview-transcribe
    npx supabase functions deploy export-account
    npx supabase functions deploy delete-account
    ```
@@ -62,6 +64,8 @@ Supabase Auth applies its own IP and endpoint limits to sign-in, sign-up, email,
 
 - AI analysis: 5 requests per 5 minutes per user, in addition to the monthly plan quota.
 - Interview practice generation: 4 requests per 10 minutes per user, with one free or 20 Premium rounds per month.
+- Completed interview feedback: 6 requests per 10 minutes per user, with idempotent assessment storage.
+- Premium interview transcription: 20 recordings per 10 minutes per user, limited to two minutes and 10 MB each.
 - Stripe Checkout creation: 5 requests per 10 minutes per user.
 - Stripe billing portal creation: 10 requests per 10 minutes per user.
 - Account deletion: 3 attempts per hour per user.
