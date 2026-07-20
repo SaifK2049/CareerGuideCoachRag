@@ -24,6 +24,7 @@ const [
   waitlistMigration,
   waitlistFunction,
   productMigration,
+  cockpitMigration,
   cvGuidanceFunction,
   importJobFunction,
   sharedReportFunction,
@@ -51,6 +52,7 @@ const [
   readFile(resolve(root, "supabase/migrations/20260718223523_public_waitlist.sql"), "utf8"),
   readFile(resolve(root, "supabase/functions/join-waitlist/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260718225738_product_workflows.sql"), "utf8"),
+  readFile(resolve(root, "supabase/migrations/20260720174347_application_cockpit.sql"), "utf8"),
   readFile(resolve(root, "supabase/functions/cv-guidance/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/functions/import-job/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/functions/shared-report/index.ts"), "utf8"),
@@ -83,6 +85,18 @@ for (const surface of ["setupChecklist", "nextActionPanel", "readinessExplainer"
 }
 for (const surface of ["planView", "progressView", "actionPlanList", "analysisHistory", "cvGuidanceResult", "sharedReportList"]) {
   if (!ids.includes(surface)) throw new Error(`Product workflow surface is missing: ${surface}`);
+}
+for (const surface of ["applicationsView", "applicationTodayList", "applicationPathFilter", "applicationSearch", "applicationKanban"]) {
+  if (!ids.includes(surface)) throw new Error(`Application cockpit surface is missing: ${surface}`);
+}
+for (const field of ["next_action", "follow_up_date", "interview_at", "contact_name", "contact_email"]) {
+  if (!cockpitMigration.includes(`add column ${field}`)) throw new Error(`Application cockpit field is missing: ${field}`);
+}
+for (const indexName of ["job_descriptions_user_status_follow_up_idx", "job_descriptions_user_interview_idx"]) {
+  if (!cockpitMigration.includes(indexName)) throw new Error(`Application cockpit index is missing: ${indexName}`);
+}
+if (!app.includes("renderApplicationCockpit") || !app.includes("data-application-stage") || !app.includes("updateApplicationStatus")) {
+  throw new Error("Application cockpit rendering or pipeline interaction is missing");
 }
 if (!app.includes("renderSetupChecklist") || !app.includes("data-empty-action")) {
   throw new Error("Guided checklist or actionable empty states are missing");

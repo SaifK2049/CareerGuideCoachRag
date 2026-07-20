@@ -190,10 +190,21 @@ try {
         content_hash: `beta-integration-hash-${index}`,
         application_status: index === 1 ? "applied" : "saved",
         applied_at: index === 1 ? new Date().toISOString() : null,
+        next_action: index === 1 ? "Follow up with the recruiter" : "",
+        follow_up_date: index === 1 ? new Date().toISOString().slice(0, 10) : null,
+        interview_at: index === 1 ? new Date(Date.now() + 86400000).toISOString() : null,
+        contact_name: index === 1 ? "Recruiter One" : "",
+        contact_email: index === 1 ? "recruiter@example.com" : "",
       },
     });
     assert.equal(job.response.status, 201, JSON.stringify(job.data));
   }
+  const cockpitJob = await rest(`job_descriptions?id=eq.${firstJobId}&select=next_action,follow_up_date,interview_at,contact_name,contact_email`, alice);
+  assert.equal(cockpitJob.response.status, 200, JSON.stringify(cockpitJob.data));
+  assert.equal(cockpitJob.data[0].next_action, "Follow up with the recruiter");
+  assert.equal(cockpitJob.data[0].contact_email, "recruiter@example.com");
+  const bobCannotReadCockpit = await rest(`job_descriptions?id=eq.${firstJobId}&select=next_action,contact_email`, bob);
+  assert.deepEqual(bobCannotReadCockpit.data, [], "application cockpit details must remain owner-only");
   const twentyFirstJob = await rest("job_descriptions", alice, {
     method: "POST",
     body: {

@@ -124,6 +124,8 @@ const demoState = {
 let state = loadState();
 let activeView = "overview";
 let activePlanFilter = "all";
+let applicationPathFilter = "all";
+let applicationSearch = "";
 let analysisTimers = [];
 let analysisUi = {};
 let cvStarterActionPromise = null;
@@ -193,6 +195,9 @@ async function loadCloudState() {
           id: job.id, title: job.title, company: job.company, location: job.location,
           source: job.source_url, description: job.description, status: job.application_status || "saved",
           closingDate: job.closing_date || "", appliedAt: job.applied_at || "", notes: job.notes || "",
+          nextAction: job.next_action || "", followUpDate: job.follow_up_date || "",
+          interviewAt: job.interview_at || "", contactName: job.contact_name || "",
+          contactEmail: job.contact_email || "",
           createdAt: job.created_at
         };
       })
@@ -248,7 +253,10 @@ async function persistCloudState() {
         company: job.company || "", location: job.location || "", source_url: job.source || "",
         description: job.description, content_hash: await contentHash(job.description),
         application_status: job.status || "saved", closing_date: job.closingDate || null,
-        applied_at: job.appliedAt ? new Date(job.appliedAt + "T12:00:00Z").toISOString() : null,
+        applied_at: toIsoDate(job.appliedAt),
+        next_action: job.nextAction || "", follow_up_date: job.followUpDate || null,
+        interview_at: toIsoDateTime(job.interviewAt), contact_name: job.contactName || "",
+        contact_email: job.contactEmail || "",
         notes: job.notes || "",
         updated_at: new Date().toISOString()
       };
@@ -280,6 +288,27 @@ async function persistCloudState() {
 
 function activePath() {
   return state.paths.find(function(path) { return path.id === state.activePathId; }) || state.paths[0];
+}
+
+function toIsoDate(value) {
+  if (!value) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? value + "T12:00:00Z" : value;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function toIsoDateTime(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function toDateTimeLocal(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
 function canAdd(featureKey, currentCount) {
@@ -670,6 +699,7 @@ function render() {
     renderProfile();
     renderActionPlan(null);
     renderProgress(null);
+    renderApplicationCockpit();
     return;
   }
   const items = analysisFor(path);
@@ -697,10 +727,12 @@ function render() {
   renderProfile();
   renderActionPlan(path);
   renderProgress(path);
+  renderApplicationCockpit();
   renderSetupChecklist(path);
   renderNextAction(path);
   document.getElementById("pageTitle").textContent = activeView === "overview" ? "Overview"
     : activeView === "paths" ? "Job paths"
+    : activeView === "applications" ? "Application cockpit"
     : activeView === "knowledge" ? "Knowledge"
     : activeView === "plan" ? "Action plan"
     : activeView === "progress" ? "Progress & reports"
@@ -740,6 +772,137 @@ function renderJobs(box, jobs) {
       '</div><button class="row-action" data-edit-job="' + job.id + '" aria-label="Edit job" title="Edit job">✎</button></div>';
   }).join("");
   box.querySelectorAll("[data-edit-job]").forEach(function(button) { button.addEventListener("click", function() { openJobModal(button.dataset.editJob); }); });
+}
+
+function applicationRecords() {
+  return state.paths.flatMap(function(path) {
+    return path.jobs.map(function(job) { return { job: job, path: path }; });
+  });
+}
+
+function applicationDateLabel(value, includeTime) {
+  if (!value) return "";
+  const date = new Date(includeTime ? value : value + "T12:00:00");
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(undefined, includeTime
+    ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+    : { month: "short", day: "numeric" }).format(date);
+}
+
+function applicationPriority(record, now, today, soon) {
+  const job = record.job;
+  if (["rejected", "archived"].includes(job.status || "saved")) return null;
+  if (job.followUpDate && job.followUpDate <= today) {
+    return { rank: job.followUpDate < today ? 0 : 1, date: job.followUpDate, type: job.followUpDate < today ? "Follow-up overdue" : "Follow up today" };
+  }
+  if (job.interviewAt) {
+    const interview = new Date(job.interviewAt);
+    if (!Number.isNaN(interview.getTime()) && interview >= now && interview <= soon) {
+      return { rank: 2, date: interview.toISOString(), type: "Interview coming up" };
+    }
+  }
+  if ((job.status || "saved") === "saved" && job.closingDate && job.closingDate <= soon.toISOString().slice(0, 10)) {
+    return { rank: 3, date: job.closingDate, type: "Closing soon" };
+  }
+  return null;
+}
+
+function renderApplicationCockpit() {
+  const all = applicationRecords();
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const soon = new Date(now.getTime() + 7 * 86400000);
+  const active = all.filter(function(record) { return ["saved", "applied", "interviewing"].includes(record.job.status || "saved"); });
+  const priorities = all.map(function(record) {
+    return { record: record, priority: applicationPriority(record, now, today, soon) };
+  }).filter(function(item) { return item.priority; }).sort(function(a, b) {
+    return a.priority.rank - b.priority.rank || String(a.priority.date).localeCompare(String(b.priority.date));
+  });
+  const upcomingInterviews = all.filter(function(record) {
+    const date = new Date(record.job.interviewAt || "");
+    return !Number.isNaN(date.getTime()) && date >= now && !["rejected", "archived"].includes(record.job.status || "saved");
+  });
+
+  document.getElementById("applicationActiveStat").textContent = active.length;
+  document.getElementById("applicationDueStat").textContent = priorities.filter(function(item) { return item.priority.rank <= 1; }).length;
+  document.getElementById("applicationInterviewStat").textContent = upcomingInterviews.length;
+  document.getElementById("applicationOfferStat").textContent = all.filter(function(record) { return record.job.status === "offer"; }).length;
+  document.getElementById("applicationTodayCount").textContent = priorities.length + (priorities.length === 1 ? " item" : " items");
+
+  const todayList = document.getElementById("applicationTodayList");
+  if (!priorities.length) {
+    todayList.innerHTML = '<div class="empty-state"><strong>You are caught up</strong><p>Add a follow-up or interview date to keep the cockpit proactive.</p></div>';
+  } else {
+    todayList.innerHTML = priorities.slice(0, 8).map(function(item) {
+      const record = item.record;
+      const includesTime = item.priority.type === "Interview coming up";
+      return '<button type="button" class="cockpit-priority" data-cockpit-edit="' + record.job.id + '" data-path-id="' + record.path.id + '"><span class="priority-dot ' + (item.priority.rank === 0 ? "is-high" : item.priority.rank === 1 ? "is-medium" : "is-low") + '"></span><span><strong>' + safe(item.priority.type) + '</strong><small>' + safe(record.job.title) + " · " + safe(record.job.company || record.path.name) + '</small></span><time>' + safe(applicationDateLabel(item.priority.date, includesTime)) + '</time></button>';
+    }).join("");
+  }
+
+  const pathFilter = document.getElementById("applicationPathFilter");
+  pathFilter.innerHTML = '<option value="all">All job paths</option>' + state.paths.map(function(path) {
+    return '<option value="' + path.id + '">' + safe(path.name) + '</option>';
+  }).join("");
+  if (!state.paths.some(function(path) { return path.id === applicationPathFilter; })) applicationPathFilter = "all";
+  pathFilter.value = applicationPathFilter;
+
+  const query = applicationSearch.toLowerCase();
+  const filtered = all.filter(function(record) {
+    return (applicationPathFilter === "all" || record.path.id === applicationPathFilter)
+      && (!query || [record.job.title, record.job.company, record.path.name].join(" ").toLowerCase().includes(query));
+  });
+  const stages = [
+    ["saved", "Saved"], ["applied", "Applied"], ["interviewing", "Interviewing"],
+    ["offer", "Offer"], ["rejected", "Rejected"]
+  ];
+  const kanban = document.getElementById("applicationKanban");
+  kanban.innerHTML = stages.map(function(stage) {
+    const records = filtered.filter(function(record) { return (record.job.status || "saved") === stage[0]; });
+    const cards = records.length ? records.map(function(record) {
+      const job = record.job;
+      const timing = job.interviewAt ? "Interview " + applicationDateLabel(job.interviewAt, true)
+        : job.followUpDate ? "Follow up " + applicationDateLabel(job.followUpDate, false)
+        : job.closingDate ? "Closes " + applicationDateLabel(job.closingDate, false) : "";
+      return '<article class="application-card" draggable="true" data-application-id="' + job.id + '" data-path-id="' + record.path.id + '"><div class="application-card-head"><span>' + safe(record.path.name) + '</span><button type="button" class="row-action" data-cockpit-edit="' + job.id + '" data-path-id="' + record.path.id + '" aria-label="Edit ' + safe(job.title) + '">✎</button></div><h4>' + safe(job.title) + '</h4><p class="application-company">' + safe(job.company || "Company not added") + '</p>' + (job.nextAction ? '<p class="application-next"><strong>Next:</strong> ' + safe(job.nextAction) + '</p>' : "") + (timing ? '<span class="application-timing">' + safe(timing) + '</span>' : "") + (job.contactName || job.contactEmail ? '<span class="application-contact">' + safe(job.contactName || job.contactEmail) + '</span>' : "") + '<label><span class="sr-only">Application status</span><select class="input compact-input" data-application-status="' + job.id + '" data-path-id="' + record.path.id + '">' + stages.map(function(option) { return '<option value="' + option[0] + '"' + (option[0] === stage[0] ? " selected" : "") + '>' + option[1] + '</option>'; }).join("") + '<option value="archived">Archived</option></select></label></article>';
+    }).join("") : '<p class="kanban-empty">No applications</p>';
+    return '<section class="kanban-column" data-application-stage="' + stage[0] + '"><div class="kanban-heading"><h3>' + stage[1] + '</h3><span>' + records.length + '</span></div><div class="kanban-cards">' + cards + '</div></section>';
+  }).join("");
+
+  document.querySelectorAll("[data-cockpit-edit]").forEach(function(button) {
+    button.addEventListener("click", function() { openJobModal(button.dataset.cockpitEdit, button.dataset.pathId); });
+  });
+  kanban.querySelectorAll("[data-application-status]").forEach(function(select) {
+    select.addEventListener("change", function() { updateApplicationStatus(select.dataset.applicationStatus, select.dataset.pathId, select.value); });
+  });
+  kanban.querySelectorAll("[data-application-id]").forEach(function(card) {
+    card.addEventListener("dragstart", function(event) {
+      event.dataTransfer.setData("text/plain", card.dataset.applicationId + ":" + card.dataset.pathId);
+      card.classList.add("is-dragging");
+    });
+    card.addEventListener("dragend", function() { card.classList.remove("is-dragging"); });
+  });
+  kanban.querySelectorAll("[data-application-stage]").forEach(function(column) {
+    column.addEventListener("dragover", function(event) { event.preventDefault(); column.classList.add("is-drag-over"); });
+    column.addEventListener("dragleave", function() { column.classList.remove("is-drag-over"); });
+    column.addEventListener("drop", function(event) {
+      event.preventDefault();
+      column.classList.remove("is-drag-over");
+      const parts = event.dataTransfer.getData("text/plain").split(":");
+      if (parts.length === 2) updateApplicationStatus(parts[0], parts[1], column.dataset.applicationStage);
+    });
+  });
+}
+
+function updateApplicationStatus(jobId, pathId, status) {
+  const path = state.paths.find(function(item) { return item.id === pathId; });
+  const job = path && path.jobs.find(function(item) { return item.id === jobId; });
+  if (!job || !["saved", "applied", "interviewing", "offer", "rejected", "archived"].includes(status)) return;
+  job.status = status;
+  if (status === "applied" && !job.appliedAt) job.appliedAt = new Date().toISOString().slice(0, 10);
+  saveState();
+  render();
+  toast("Application moved to " + status.replace("_", " "));
 }
 
 function renderPaths(path) {
@@ -941,7 +1104,8 @@ function openPathModal(path) {
   openModal("pathModal");
 }
 
-function openJobModal(jobId) {
+function openJobModal(jobId, pathId) {
+  if (pathId && state.paths.some(function(item) { return item.id === pathId; })) state.activePathId = pathId;
   const path = activePath();
   const job = path && path.jobs.find(function(item) { return item.id === jobId; });
   document.getElementById("jobId").value = job ? job.id : "";
@@ -953,6 +1117,11 @@ function openJobModal(jobId) {
   document.getElementById("jobStatus").value = job ? job.status || "saved" : "saved";
   document.getElementById("jobClosingDate").value = job ? job.closingDate || "" : "";
   document.getElementById("jobAppliedAt").value = job && job.appliedAt ? String(job.appliedAt).slice(0, 10) : "";
+  document.getElementById("jobFollowUpDate").value = job ? job.followUpDate || "" : "";
+  document.getElementById("jobInterviewAt").value = job ? toDateTimeLocal(job.interviewAt) : "";
+  document.getElementById("jobNextAction").value = job ? job.nextAction || "" : "";
+  document.getElementById("jobContactName").value = job ? job.contactName || "" : "";
+  document.getElementById("jobContactEmail").value = job ? job.contactEmail || "" : "";
   document.getElementById("jobNotes").value = job ? job.notes || "" : "";
   document.getElementById("jobImportStatus").textContent = "";
   document.getElementById("jobModalTitle").textContent = job ? "Edit job description" : "Add job to " + (path ? path.name : "this path");
@@ -1265,6 +1434,14 @@ async function openBilling() {
 document.querySelectorAll("[data-view]").forEach(function(button) { button.addEventListener("click", function() { setView(button.dataset.view); }); });
 document.querySelectorAll("[data-view-target]").forEach(function(button) { button.addEventListener("click", function() { setView(button.dataset.viewTarget); }); });
 document.getElementById("nextActionButton").addEventListener("click", function() { runOverviewAction(this.dataset.action); });
+document.getElementById("applicationSearch").addEventListener("input", function() {
+  applicationSearch = this.value.trim();
+  renderApplicationCockpit();
+});
+document.getElementById("applicationPathFilter").addEventListener("change", function() {
+  applicationPathFilter = this.value;
+  renderApplicationCockpit();
+});
 document.getElementById("readinessExplainer").addEventListener("click", function() {
   const details = document.getElementById("readinessDetails");
   const visible = details.classList.toggle("is-visible");
@@ -1625,11 +1802,17 @@ document.getElementById("jobForm").addEventListener("submit", function(event) {
     status: document.getElementById("jobStatus").value,
     closingDate: document.getElementById("jobClosingDate").value,
     appliedAt: document.getElementById("jobAppliedAt").value,
+    followUpDate: document.getElementById("jobFollowUpDate").value,
+    interviewAt: document.getElementById("jobInterviewAt").value,
+    nextAction: document.getElementById("jobNextAction").value.trim(),
+    contactName: document.getElementById("jobContactName").value.trim(),
+    contactEmail: document.getElementById("jobContactEmail").value.trim(),
     notes: document.getElementById("jobNotes").value.trim(),
     createdAt: existing ? existing.createdAt : new Date().toISOString()
   };
+  if (record.status === "applied" && !record.appliedAt) record.appliedAt = new Date().toISOString().slice(0, 10);
   if (existing) Object.assign(existing, record); else path.jobs.unshift(record);
-  saveState(); closeModal("jobModal"); render(); toast("Job description added to this path");
+  saveState(); closeModal("jobModal"); render(); toast(existing ? "Application updated" : "Job description added to this path");
 });
 
 document.getElementById("planItemForm").addEventListener("submit", async function(event) {
