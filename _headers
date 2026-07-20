@@ -1,14 +1,20 @@
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://challenges.cloudflare.com; img-src 'self' data: blob:; worker-src 'self' blob: https://cdnjs.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
   Referrer-Policy: strict-origin-when-cross-origin
-  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(self)
+  Permissions-Policy: camera=(), microphone=(self), geolocation=(), payment=(self)
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Cross-Origin-Opener-Policy: same-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains
 
 /*.js
-  Cache-Control: public, max-age=300, must-revalidate
+  Cache-Control: no-cache, must-revalidate
 
 /*.css
   Cache-Control: public, max-age=300, must-revalidate
+
+/
+  Cache-Control: no-cache, must-revalidate
+
+/index.html
+  Cache-Control: no-cache, must-revalidate

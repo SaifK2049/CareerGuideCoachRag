@@ -709,13 +709,20 @@ function renderMembershipComparison() {
     ["Interview rounds", "20 per month"],
     ["Microphone practice", "Included"]
   ];
-  document.getElementById("currentPlanName").textContent = currentName;
-  document.getElementById("currentPlanState").textContent = "Active";
-  document.getElementById("currentPlanPrice").innerHTML = premium ? '€9.99 <span>/ month</span>' : betaAccess ? '€0 <span>during private beta</span>' : '€0 <span>/ month</span>';
-  document.getElementById("premiumPlanState").textContent = premium ? "Your current plan" : "Available later";
-  document.getElementById("currentPlanFeatures").innerHTML = membershipFeaturesMarkup(currentFeatures);
-  document.getElementById("premiumPlanFeatures").innerHTML = membershipFeaturesMarkup(premiumFeatures);
-  document.getElementById("membershipPlanNote").textContent = premium
+  const currentPlanName = document.getElementById("currentPlanName");
+  const currentPlanState = document.getElementById("currentPlanState");
+  const currentPlanPrice = document.getElementById("currentPlanPrice");
+  const premiumPlanState = document.getElementById("premiumPlanState");
+  const currentPlanFeatures = document.getElementById("currentPlanFeatures");
+  const premiumPlanFeatures = document.getElementById("premiumPlanFeatures");
+  const membershipPlanNote = document.getElementById("membershipPlanNote");
+  if (currentPlanName) currentPlanName.textContent = currentName;
+  if (currentPlanState) currentPlanState.textContent = "Active";
+  if (currentPlanPrice) currentPlanPrice.innerHTML = premium ? '€9.99 <span>/ month</span>' : betaAccess ? '€0 <span>during private beta</span>' : '€0 <span>/ month</span>';
+  if (premiumPlanState) premiumPlanState.textContent = premium ? "Your current plan" : "Available later";
+  if (currentPlanFeatures) currentPlanFeatures.innerHTML = membershipFeaturesMarkup(currentFeatures);
+  if (premiumPlanFeatures) premiumPlanFeatures.innerHTML = membershipFeaturesMarkup(premiumFeatures);
+  if (membershipPlanNote) membershipPlanNote.textContent = premium
     ? "Premium is active on your account. This comparison does not contain billing or payment controls."
     : "Premium will cost €9.99 per month when subscriptions become available. No payment will be requested yet.";
 }
@@ -1587,8 +1594,20 @@ function renderProfile() {
   if (state.cv.fileName) details.textContent = state.cv.fileName + " · extracted " + formatDate(state.cv.uploadedAt);
 }
 
-function openModal(id) { document.getElementById(id).classList.add("is-open"); document.getElementById(id).setAttribute("aria-hidden", "false"); }
-function closeModal(id) { document.getElementById(id).classList.remove("is-open"); document.getElementById(id).setAttribute("aria-hidden", "true"); }
+function openModal(id) {
+  const modal = document.getElementById(id);
+  if (!modal) return false;
+  modal.classList.add("is-open");
+  modal.setAttribute("aria-hidden", "false");
+  return true;
+}
+function closeModal(id) {
+  const modal = document.getElementById(id);
+  if (!modal) return false;
+  modal.classList.remove("is-open");
+  modal.setAttribute("aria-hidden", "true");
+  return true;
+}
 
 function openPasswordSetup(mode) {
   passwordSetupMode = mode;

@@ -106,6 +106,9 @@ for (const surface of ["membershipPlanModal", "currentPlanName", "currentPlanPri
 if (!app.includes("renderMembershipComparison") || !app.includes('openModal("membershipPlanModal")') || !html.includes("€9.99") || !html.includes("No payment will be requested")) {
   throw new Error("Profile membership comparison or no-payment state is incomplete");
 }
+if (!app.includes("if (currentPlanPrice) currentPlanPrice.innerHTML") || !app.includes("if (!modal) return false")) {
+  throw new Error("Membership comparison must tolerate mixed cached HTML and JavaScript versions");
+}
 for (const field of ["next_action", "follow_up_date", "interview_at", "contact_name", "contact_email"]) {
   if (!cockpitMigration.includes(`add column ${field}`)) throw new Error(`Application cockpit field is missing: ${field}`);
 }
@@ -120,6 +123,12 @@ if (!app.includes("renderSetupChecklist") || !app.includes("data-empty-action"))
 }
 for (const header of ["Content-Security-Policy", "Strict-Transport-Security", "X-Frame-Options"]) {
   if (!headers.includes(header)) throw new Error(`Required Cloudflare header is missing: ${header}`);
+}
+if (!/\/\*\.js\s+Cache-Control: no-cache, must-revalidate/.test(headers) || !/\/index\.html\s+Cache-Control: no-cache, must-revalidate/.test(headers)) {
+  throw new Error("HTML and JavaScript must revalidate to prevent mixed deployment versions");
+}
+if (!headers.includes("microphone=(self)")) {
+  throw new Error("Premium microphone practice must allow same-origin browser recording");
 }
 if (!/\[functions\.stripe-webhook\][\s\S]*?verify_jwt = false/.test(supabaseConfig)) {
   throw new Error("Stripe webhook must be public at the gateway so Stripe can reach signature verification");
