@@ -1516,15 +1516,27 @@ document.getElementById("signupForm").addEventListener("submit", async function(
   this.reset();
 });
 
-document.getElementById("showSignupButton").addEventListener("click", function() {
+function showSignupPanel() {
   document.getElementById("signInPanel").classList.add("hidden");
   document.getElementById("signupPanel").classList.remove("hidden");
   ensureTurnstile("signup");
-});
-document.getElementById("showSigninButton").addEventListener("click", function() {
+}
+function showSigninPanel() {
   document.getElementById("signupPanel").classList.add("hidden");
   document.getElementById("signInPanel").classList.remove("hidden");
   ensureTurnstile("signin");
+}
+document.getElementById("showSignupButton").addEventListener("click", showSignupPanel);
+document.getElementById("authNavSignup").addEventListener("click", showSignupPanel);
+document.getElementById("showSigninButton").addEventListener("click", showSigninPanel);
+document.getElementById("authNavSignin").addEventListener("click", showSigninPanel);
+document.getElementById("passwordToggle").addEventListener("click", function() {
+  const password = document.getElementById("authPassword");
+  const reveal = password.type === "password";
+  password.type = reveal ? "text" : "password";
+  this.textContent = reveal ? "Hide" : "Show";
+  this.setAttribute("aria-label", reveal ? "Hide password" : "Show password");
+  this.setAttribute("aria-pressed", String(reveal));
 });
 document.getElementById("forgotPasswordButton").addEventListener("click", async function() {
   const email = document.getElementById("authEmail").value.trim();

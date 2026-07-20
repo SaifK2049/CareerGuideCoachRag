@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f4f6f8" />
+    <meta name="theme-color" content="#f4eadc" />
     <title>Masari</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -12,13 +12,17 @@
   </head>
   <body>
     <section class="auth-gate" id="authGate">
-      <div class="auth-brand"><div class="brand-mark"><span>M</span></div><strong>Masari</strong></div>
+      <header class="auth-header">
+        <div class="auth-brand"><div class="brand-mark"><span>M</span></div><strong>Masari</strong></div>
+        <div class="auth-header-actions">
+          <button type="button" class="text-button" id="authNavSignin">Log in</button>
+          <button type="button" class="button button-light" id="authNavSignup">Join waitlist</button>
+        </div>
+      </header>
       <div class="auth-layout">
         <div class="auth-promise">
           <p class="eyebrow">Private career intelligence</p>
-          <h1>Turn your experience into a clear next move.</h1>
-          <p>Keep your CV, job targets, evidence, and progress in one private workspace. Masari shows what employers ask for and where to focus next.</p>
-          <div class="auth-points"><span>01</span><p>Your data stays isolated to your account.</p><span>02</span><p>AI findings cite the source evidence behind them.</p><span>03</span><p>Your personal dashboard grows with your career.</p></div>
+          <h1>Your experience is worth more when you know where it can take you.</h1>
         </div>
         <div class="auth-card" id="signInPanel">
           <p class="eyebrow">Welcome back</p>
@@ -28,7 +32,10 @@
             <label class="field-label" for="authEmail">Email</label>
             <input class="input" id="authEmail" type="email" autocomplete="email" required />
             <label class="field-label" for="authPassword">Password</label>
-            <input class="input" id="authPassword" type="password" minlength="8" autocomplete="current-password" required />
+            <div class="password-field">
+              <input class="input" id="authPassword" type="password" minlength="8" autocomplete="current-password" required />
+              <button type="button" class="password-toggle" id="passwordToggle" aria-label="Show password" aria-pressed="false">Show</button>
+            </div>
             <div class="turnstile-slot" id="signinTurnstile" aria-label="Security check"></div>
             <button type="submit" class="button button-dark button-full">Sign in</button>
             <button type="button" class="text-button auth-link" id="forgotPasswordButton">Forgot password?</button>
