@@ -674,9 +674,53 @@ function renderNextAction(path) {
   }
 }
 
+function membershipQuota(featureKey, fallback) {
+  const feature = accountAccess.features && accountAccess.features[featureKey];
+  if (!feature) return fallback;
+  if (!feature.enabled) return "Not included";
+  if (feature.quota === null) return "Unlimited";
+  return String(Number(feature.quota));
+}
+
+function membershipFeaturesMarkup(rows) {
+  return rows.map(function(row) {
+    return '<div class="membership-feature-row"><span>' + safe(row[0]) + '</span><strong>' + safe(row[1]) + '</strong></div>';
+  }).join("");
+}
+
+function renderMembershipComparison() {
+  const premium = accountAccess.plan === "premium";
+  const betaAccess = betaMode && !premium;
+  const currentName = premium ? "Masari Premium" : betaAccess ? "Masari Private Beta" : "Masari Free";
+  const analysisLimit = Number(accountAccess.rag_limit || (betaAccess ? 10 : premium ? 50 : 2));
+  const currentFeatures = [
+    ["Cited AI analyses", analysisLimit + " per month"],
+    ["Job paths", membershipQuota("job_paths", betaAccess ? "3" : premium ? "10" : "1")],
+    ["Saved jobs", membershipQuota("job_descriptions", betaAccess ? "20" : premium ? "100" : "5")],
+    ["Knowledge evidence", membershipQuota("knowledge_evidence", betaAccess ? "50" : premium ? "250" : "10")],
+    ["Interview rounds", membershipQuota("interview_prep", premium ? "20 per month" : "1 per month").replace(/^(\d+)$/, "$1 per month")],
+    ["Microphone practice", membershipQuota("interview_voice", premium ? "Included" : "Not included") === "Not included" ? "Not included" : "Included"]
+  ];
+  const premiumFeatures = [
+    ["Cited AI analyses", "50 per month"],
+    ["Job paths", "10"],
+    ["Saved jobs", "100"],
+    ["Knowledge evidence", "250"],
+    ["Interview rounds", "20 per month"],
+    ["Microphone practice", "Included"]
+  ];
+  document.getElementById("currentPlanName").textContent = currentName;
+  document.getElementById("currentPlanState").textContent = "Active";
+  document.getElementById("premiumPlanState").textContent = premium ? "Your current plan" : "Available later";
+  document.getElementById("currentPlanFeatures").innerHTML = membershipFeaturesMarkup(currentFeatures);
+  document.getElementById("premiumPlanFeatures").innerHTML = membershipFeaturesMarkup(premiumFeatures);
+  document.getElementById("membershipPlanNote").textContent = premium
+    ? "Premium is active on your account. This comparison does not contain billing or payment controls."
+    : "Premium subscriptions are not available yet. No payment will be requested.";
+}
+
 function renderAccount() {
   const premium = accountAccess.plan === "premium";
-  const hasBilling = !["free", "canceled", "incomplete_expired"].includes(accountAccess.status || "free");
   const betaAccess = betaMode && !premium;
   const name = state.profile.displayName || (session && session.user.email && session.user.email.split("@")[0]) || "there";
   document.getElementById("welcomeLabel").textContent = "Welcome, " + name;
@@ -686,7 +730,7 @@ function renderAccount() {
     badge.classList.toggle("is-premium", premium);
   });
   document.getElementById("upgradeButton").classList.toggle("hidden", premium || !billingEnabled);
-  document.getElementById("membershipActionButton").classList.toggle("hidden", !billingEnabled);
+  document.getElementById("membershipActionButton").classList.remove("hidden");
   document.getElementById("membershipName").textContent = premium ? "Masari Premium" : betaAccess ? "Masari Private Beta" : "Masari Free";
   document.getElementById("membershipDescription").textContent = premium
     ? "Advanced career analysis and planning are active."
@@ -697,7 +741,8 @@ function renderAccount() {
   const limit = Number(accountAccess.rag_limit || 0);
   document.getElementById("analysisUsage").textContent = used + " / " + (limit || "—");
   document.getElementById("analysisUsageBar").style.width = limit ? Math.min(100, Math.round(used / limit * 100)) + "%" : "0%";
-  document.getElementById("membershipActionButton").textContent = premium || hasBilling ? "Manage billing" : "Upgrade to Premium";
+  document.getElementById("membershipActionButton").textContent = premium ? "View plan details" : "Compare plans";
+  renderMembershipComparison();
 }
 
 function render() {
@@ -1350,10 +1395,9 @@ function renderInterviewPractice() {
   const recordButton = stage.querySelector("#interviewRecordButton");
   if (recordButton) recordButton.onclick = function() { startInterviewRecording(question); };
   const premiumVoiceButton = stage.querySelector("#interviewPremiumVoiceButton");
-  if (premiumVoiceButton) premiumVoiceButton.onclick = async function() {
-    if (!billingEnabled) { toast("Microphone practice is included with Premium when billing is enabled"); return; }
-    try { await openBilling(); }
-    catch (error) { toast(await functionErrorMessage(error, "Premium checkout could not be opened")); }
+  if (premiumVoiceButton) premiumVoiceButton.onclick = function() {
+    renderMembershipComparison();
+    openModal("membershipPlanModal");
   };
 }
 
@@ -2145,18 +2189,9 @@ document.getElementById("onboardingForm").addEventListener("submit", async funct
   } catch (error) { message.textContent = error.message || "Setup could not be completed."; }
 });
 ["upgradeButton", "membershipActionButton"].forEach(function(id) {
-  document.getElementById(id).addEventListener("click", async function() {
-    if (!billingEnabled) {
-      toast("Premium billing is disabled during the private beta");
-      return;
-    }
-    if (config.localPreview) {
-      toast("Premium checkout becomes available when Stripe and Supabase are connected");
-      return;
-    }
-    this.disabled = true;
-    try { await openBilling(); }
-    catch (error) { toast(await functionErrorMessage(error, "Billing is temporarily unavailable")); this.disabled = false; }
+  document.getElementById(id).addEventListener("click", function() {
+    renderMembershipComparison();
+    openModal("membershipPlanModal");
   });
 });
 document.addEventListener("visibilitychange", function() {

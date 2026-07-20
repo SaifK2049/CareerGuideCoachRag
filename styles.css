@@ -384,3 +384,22 @@ h1{font-size:26px}h2{font-size:27px}h3{font-size:17px}
   .readiness-meter{border-color:#e1d8d0}
   .next-action::before{margin:-22px 0 -22px -22px}
 }
+.membership-plan-modal{width:min(820px,100%)}
+.membership-compare-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);margin-top:22px}
+.membership-plan-column{padding:22px}
+.membership-plan-column+.membership-plan-column{border-left:1px solid var(--line)}
+.membership-plan-column.is-current{background:#fcf7ef}
+.membership-column-label{display:block;color:var(--muted);font-size:11px;margin-bottom:9px}
+.membership-plan-title{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-bottom:20px}
+.membership-plan-title h4{font-family:"Space Grotesk",sans-serif;font-size:17px;margin:0}
+.membership-plan-title strong{color:var(--blue);font-size:10px}
+.membership-feature-list{border-top:1px solid var(--line)}
+.membership-feature-row{display:flex;align-items:center;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding:11px 0}
+.membership-feature-row span{color:var(--muted);font-size:11px}
+.membership-feature-row strong{font-size:11px;text-align:right}
+.membership-plan-note{color:var(--muted);font-size:11px;line-height:1.55;margin:16px 0 0}
+.membership-plan-modal .form-actions{border-top:1px solid var(--line);padding-top:18px}
+@media(max-width:680px){
+  .membership-compare-grid{grid-template-columns:1fr}
+  .membership-plan-column+.membership-plan-column{border-left:0;border-top:1px solid var(--line)}
+}
