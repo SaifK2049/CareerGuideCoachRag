@@ -126,6 +126,7 @@ const demoState = {
 
 let state = loadState();
 let activeView = "overview";
+let assessmentFindingsExpanded = false;
 let activePlanFilter = "all";
 let applicationPathFilter = "all";
 let applicationSearch = "";
@@ -466,7 +467,7 @@ function renderAnalysisResult(path) {
       }).map(function(entry) {
         return state.knowledge.find(function(evidence) { return evidence.id === entry.evidence_id; });
       }).filter(Boolean);
-      return '<article class="analysis-finding"><div class="analysis-finding-head"><strong>' + safe(item.skill) +
+      return '<article class="analysis-finding"' + (findingIndex >= 3 ? ' data-collapsible-finding hidden' : '') + '><div class="analysis-finding-head"><strong>' + safe(item.skill) +
         '</strong><span class="skill-badge ' + badgeClass + '">' + safe(item.confidence) + '</span></div><p>' +
         safe(item.explanation) + '</p>' + (linkedEvidence.length ? '<div class="finding-evidence-links"><strong>Connected evidence</strong><span>' +
         linkedEvidence.map(function(evidence) { return safe(evidence.title); }).join("</span><span>") +
@@ -490,7 +491,23 @@ function renderAnalysisResult(path) {
         findingIndex + '">Needs work</button><button type="button" class="text-button" data-plan-finding="' +
         findingIndex + '">Add to plan <span>→</span></button><button type="button" class="text-button add-evidence-link" data-add-finding-evidence="' +
         findingIndex + '">Add evidence <span>→</span></button></div></article>';
-    }).join("") + '</div></div>';
+    }).join("") + '</div>' + ((analysis.findings || []).length > 3
+      ? '<button type="button" class="assessment-toggle" aria-expanded="false">Display more</button>'
+      : '') + '</div>';
+  const assessmentToggle = box.querySelector(".assessment-toggle");
+  if (assessmentToggle) {
+    const collapsibleFindings = box.querySelectorAll("[data-collapsible-finding]");
+    function updateAssessmentFindings() {
+      collapsibleFindings.forEach(function(finding) { finding.hidden = !assessmentFindingsExpanded; });
+      assessmentToggle.textContent = assessmentFindingsExpanded ? "Collapse" : "Display more";
+      assessmentToggle.setAttribute("aria-expanded", String(assessmentFindingsExpanded));
+    }
+    assessmentToggle.addEventListener("click", function() {
+      assessmentFindingsExpanded = !assessmentFindingsExpanded;
+      updateAssessmentFindings();
+    });
+    updateAssessmentFindings();
+  }
   box.querySelectorAll("[data-citation-target]").forEach(function(button) {
     button.addEventListener("click", function() {
       const detail = document.getElementById(button.dataset.citationTarget);
