@@ -3,17 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f4eadc" />
+    <meta name="theme-color" content="#FEF7F0" />
     <title>Masari</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <section class="auth-gate" id="authGate">
       <header class="auth-header">
-        <div class="auth-brand"><div class="brand-mark"><span>M</span></div><strong>Masari</strong></div>
+        <div class="auth-brand"><img src="assets/masari-logo.png" alt="Masari" /></div>
         <div class="auth-header-actions">
           <button type="button" class="text-button" id="authNavSignin">Log in</button>
           <button type="button" class="button button-light" id="authNavSignup">Join waitlist</button>
@@ -64,7 +64,7 @@
 
     <section class="onboarding-gate hidden" id="onboardingGate">
       <div class="onboarding-card">
-        <div class="onboarding-head"><div class="auth-brand"><div class="brand-mark"><span>M</span></div><strong>Masari</strong></div><button class="text-button" id="onboardingSignoutButton">Sign out</button></div>
+        <div class="onboarding-head"><div class="auth-brand"><img src="assets/masari-logo.png" alt="Masari" /></div><button class="text-button" id="onboardingSignoutButton">Sign out</button></div>
         <div class="onboarding-progress"><span class="is-active" data-step-dot="1"></span><span data-step-dot="2"></span><span data-step-dot="3"></span></div>
         <form id="onboardingForm">
           <div class="onboarding-step" data-onboarding-step="1">
@@ -92,18 +92,18 @@
     </section>
 
     <div class="app-shell hidden" id="appShell">
-      <aside class="sidebar">
-        <div class="brand-mark"><span>M</span></div>
-        <div class="brand-copy"><strong>Masari</strong><span>Career intelligence</span></div>
+      <aside class="sidebar" id="appSidebar">
+        <div class="sidebar-brand"><img src="assets/masari-logo.png" alt="Masari" /></div>
+        <div class="sidebar-workspace"><span>Career workspace</span><strong id="workspaceName">Your workspace</strong></div>
         <nav class="primary-nav" aria-label="Primary navigation">
-          <button class="nav-item is-active" data-view="overview"><span class="nav-icon">◈</span>Overview</button>
-          <button class="nav-item" data-view="paths"><span class="nav-icon">↗</span>Job paths</button>
-          <button class="nav-item" data-view="applications"><span class="nav-icon">▦</span>Applications</button>
-          <button class="nav-item" data-view="interview"><span class="nav-icon">◇</span>Interview practice</button>
-          <button class="nav-item" data-view="knowledge"><span class="nav-icon">▤</span>Knowledge</button>
-          <button class="nav-item" data-view="plan"><span class="nav-icon">✓</span>Action plan</button>
-          <button class="nav-item" data-view="progress"><span class="nav-icon">◫</span>Progress</button>
-          <button class="nav-item" data-view="profile"><span class="nav-icon">◎</span>Profile &amp; CV</button>
+          <button class="nav-item is-active" data-view="overview"><span class="nav-icon" aria-hidden="true">⌂</span>Overview</button>
+          <button class="nav-item" data-view="profile"><span class="nav-icon" aria-hidden="true">▤</span>My CV</button>
+          <button class="nav-item" data-view="paths"><span class="nav-icon" aria-hidden="true">↗</span>Target roles</button>
+          <button class="nav-item" data-view="knowledge"><span class="nav-icon" aria-hidden="true">≡</span>Skill gaps</button>
+          <button class="nav-item" data-view="plan"><span class="nav-icon" aria-hidden="true">✓</span>Career plan</button>
+          <button class="nav-item" data-view="interview"><span class="nav-icon" aria-hidden="true">◇</span>Interview prep</button>
+          <button class="nav-item" data-view="applications"><span class="nav-icon" aria-hidden="true">▦</span>Applications</button>
+          <button class="nav-item" data-view="progress"><span class="nav-icon" aria-hidden="true">◫</span>Reports</button>
         </nav>
         <div class="sidebar-bottom">
           <div class="storage-status"><span class="status-dot"></span><div><strong>Private workspace</strong><span>Saved in this browser</span></div></div>
@@ -115,7 +115,8 @@
 
       <main class="main-content">
         <header class="topbar">
-          <div><p class="eyebrow" id="welcomeLabel">Your career intelligence</p><h1 id="pageTitle">Overview</h1></div>
+          <button class="mobile-menu-button" id="mobileMenuButton" type="button" aria-label="Open navigation" aria-controls="appSidebar" aria-expanded="false">☰</button>
+          <div><p class="topbar-context" id="welcomeLabel">Your career workspace</p><h1 id="pageTitle">Overview</h1></div>
           <div class="topbar-actions"><span class="plan-badge" id="planBadge">Beta</span><span class="sync-label"><span class="status-dot"></span><span id="saveState">Connecting…</span></span><button class="button button-light hidden" id="upgradeButton">Upgrade</button><button class="button button-light" id="authButton">Sign out</button><button class="button button-dark" data-open-modal="jobModal"><span>＋</span> Add job</button></div>
         </header>
         <div id="toast" class="toast" role="status"></div>
@@ -129,9 +130,9 @@
             <div class="setup-progress" aria-hidden="true"><span id="setupProgressBar"></span></div>
             <div class="setup-steps" id="setupSteps"></div>
           </section>
-          <div class="overview-hero">
-            <div><p class="eyebrow">Active job path</p><div class="hero-heading-row"><h2 id="activePathName">Cloud Platform Engineering</h2><button class="icon-button" id="editPathButton" aria-label="Edit active path" title="Edit active path">✎</button></div><p class="hero-description" id="activePathDescription">Build evidence across the infrastructure, delivery, and reliability skills employers are asking for.</p><div class="hero-meta"><span id="activePathTarget">Senior Cloud / Platform Engineer</span><span>·</span><span id="activePathJobCount">0 jobs tracked</span></div></div>
-            <div class="readiness-meter"><div class="meter-label"><span>Evidence coverage</span><strong id="readinessScore">0%</strong></div><div class="meter-track"><span id="readinessBar"></span></div><p id="readinessNote">Add your CV and a few knowledge entries to establish a baseline.</p><button type="button" class="readiness-explainer" id="readinessExplainer" aria-expanded="false" aria-controls="readinessDetails">How this is calculated</button><div class="readiness-details" id="readinessDetails"><p>This directional score compares recurring skills in your saved jobs with evidence in your CV and knowledge entries. It is not a hiring probability.</p></div></div>
+          <div class="overview-hero" aria-labelledby="activePathName">
+            <div><p class="report-label">Current target role</p><div class="hero-heading-row"><h2 id="activePathName">Cloud Platform Engineering</h2><button class="icon-button" id="editPathButton" aria-label="Edit active path" title="Edit active path">✎</button></div><p class="hero-description" id="activePathDescription">Build evidence across the infrastructure, delivery, and reliability skills employers are asking for.</p><div class="hero-meta"><span id="activePathTarget">Senior Cloud / Platform Engineer</span><span>·</span><span id="activePathJobCount">0 jobs tracked</span></div></div>
+            <div class="readiness-meter"><div class="meter-label"><span>Your evidence coverage</span><strong id="readinessScore">0%</strong></div><div class="meter-track"><span id="readinessBar"></span></div><p id="readinessNote">Add your CV and a few knowledge entries to establish a baseline.</p><button type="button" class="readiness-explainer" id="readinessExplainer" aria-expanded="false" aria-controls="readinessDetails">How this measure is calculated</button><div class="readiness-details" id="readinessDetails"><p>This directional score compares recurring skills in your saved jobs with evidence in your CV and knowledge entries. It is not a hiring probability.</p></div></div>
           </div>
           <section class="next-action panel" id="nextActionPanel">
             <div><p class="eyebrow">Your next best action</p><h3 id="nextActionTitle">Add your first job description</h3><p id="nextActionDescription">Masari needs a target job to understand what employers are asking for.</p></div>
@@ -173,7 +174,7 @@
 
         <section class="view" id="interviewView">
           <div class="page-intro"><div><p class="eyebrow">Interview preparation</p><h2>Practise for the job you want</h2><p>Build truthful answers from your CV, saved evidence, and the role’s actual requirements.</p></div></div>
-          <section class="panel interview-scorebar" aria-label="Practice progress">
+          <section class="panel interview-scorebar" aria-label="Practice progress" hidden>
             <div><span>Level</span><strong id="interviewLevel">1</strong></div>
             <div class="interview-xp"><span id="interviewXpLabel">0 XP · 100 to next level</span><div class="meter-track"><span id="interviewXpBar"></span></div></div>
             <div><span>Practice streak</span><strong id="interviewStreak">0 days</strong></div>
@@ -187,7 +188,7 @@
               <p class="interview-allowance" id="interviewAllowance">Free includes one practice set each month.</p>
               <div class="interview-history-head"><h3>Previous rounds</h3><span id="interviewSessionCount">0</span></div>
               <div id="interviewSessionList" class="interview-session-list"></div>
-              <div class="interview-badges">
+              <div class="interview-badges" hidden>
                 <h3>Achievements</h3>
                 <div id="interviewBadgeList"></div>
               </div>
@@ -246,7 +247,7 @@
     <div class="modal-backdrop" id="planItemModal" aria-hidden="true"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="planItemModalTitle"><button class="modal-close" data-close-modal="planItemModal" aria-label="Close">×</button><p class="eyebrow">Action plan</p><h3 id="planItemModalTitle">Add an action</h3><form id="planItemForm"><input type="hidden" id="planItemId" /><input type="hidden" id="planAnalysisId" /><input type="hidden" id="planFindingIndex" /><label class="field-label" for="planItemTitle">Action</label><input class="input" id="planItemTitle" maxlength="240" required /><label class="field-label" for="planItemSkill">Skill</label><input class="input" id="planItemSkill" maxlength="160" /><label class="field-label" for="planItemDescription">What will you do?</label><textarea class="textarea" id="planItemDescription" rows="4" maxlength="10000"></textarea><div class="form-row"><div><label class="field-label" for="planItemPriority">Priority</label><select class="input" id="planItemPriority"><option value="high">High</option><option value="medium" selected>Medium</option><option value="low">Low</option></select></div><div><label class="field-label" for="planItemTargetDate">Target date</label><input class="input" id="planItemTargetDate" type="date" /></div></div><label class="field-label" for="planEvidenceId">Connect supporting evidence <span class="optional-label">optional</span></label><select class="input" id="planEvidenceId"><option value="">No evidence linked</option></select><div class="form-actions"><button type="button" class="text-button danger hidden" id="deletePlanItemButton">Delete action</button><button type="button" class="button button-light" data-close-modal="planItemModal">Cancel</button><button type="submit" class="button button-dark">Save action</button></div></form></div></div>
     <div class="modal-backdrop" id="betaConsentModal" aria-hidden="true"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="betaConsentModalTitle"><p class="eyebrow">Before continuing</p><h3 id="betaConsentModalTitle">Private beta and AI processing</h3><p class="muted-copy">Masari sends relevant CV, job, evidence, and completed interview-answer content to an AI provider for requested results. Optional Premium microphone recordings are processed for transcription and are not stored by Masari. The beta is experimental and does not provide employment advice.</p><form id="betaConsentForm"><label class="consent-row"><input id="existingUserBetaConsent" type="checkbox" required /><span>I agree to the <a href="/beta-terms.html" target="_blank" rel="noreferrer">Private Beta Terms</a> and acknowledge the <a href="/privacy.html" target="_blank" rel="noreferrer">Privacy Notice</a>.</span></label><p id="betaConsentStatus" class="auth-message" role="status"></p><div class="form-actions"><button type="button" class="button button-light" id="betaConsentSignoutButton">Sign out</button><button type="submit" class="button button-dark">Accept and continue</button></div></form></div></div>
     <div class="modal-backdrop" id="deleteAccountModal" aria-hidden="true"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="deleteAccountModalTitle"><button class="modal-close" data-close-modal="deleteAccountModal" aria-label="Close">×</button><p class="eyebrow">Permanent action</p><h3 id="deleteAccountModalTitle">Delete your Masari account</h3><p class="muted-copy">This permanently removes your account, CV files, jobs, evidence, analyses, and feedback. Export your data first if you need a copy.</p><form id="deleteAccountForm"><label class="field-label" for="deleteConfirmation">Type DELETE</label><input class="input" id="deleteConfirmation" autocomplete="off" required pattern="DELETE" /><label class="field-label" for="deletePassword">Confirm your current password</label><input class="input" id="deletePassword" type="password" minlength="8" autocomplete="current-password" required /><p id="deleteAccountStatus" class="auth-message" role="status"></p><div class="form-actions"><button type="button" class="button button-light" data-close-modal="deleteAccountModal">Cancel</button><button type="submit" class="button button-dark danger-button">Delete permanently</button></div></form></div></div>
-    <div class="modal-backdrop password-setup-backdrop" id="resetPasswordModal" aria-hidden="true"><div class="modal password-setup-card" role="dialog" aria-modal="true" aria-labelledby="resetPasswordTitle"><div class="auth-brand"><div class="brand-mark"><span>M</span></div><strong>Masari</strong></div><p class="eyebrow">Account security</p><h3 id="resetPasswordTitle">Choose a new password</h3><p class="muted-copy" id="resetPasswordDescription">Use at least ten characters with upper-case, lower-case, and number characters. Do not reuse a password.</p><form id="resetPasswordForm"><label class="field-label" for="newPassword">New password</label><input class="input" id="newPassword" type="password" minlength="10" autocomplete="new-password" required /><label class="field-label" for="confirmPassword">Confirm password</label><input class="input" id="confirmPassword" type="password" minlength="10" autocomplete="new-password" required /><p id="resetPasswordMessage" class="auth-message" role="status"></p><div class="form-actions"><button type="submit" class="button button-dark" id="resetPasswordSubmit">Update password</button></div></form></div></div>
+    <div class="modal-backdrop password-setup-backdrop" id="resetPasswordModal" aria-hidden="true"><div class="modal password-setup-card" role="dialog" aria-modal="true" aria-labelledby="resetPasswordTitle"><div class="auth-brand"><img src="assets/masari-logo.png" alt="Masari" /></div><p class="eyebrow">Account security</p><h3 id="resetPasswordTitle">Choose a new password</h3><p class="muted-copy" id="resetPasswordDescription">Use at least ten characters with upper-case, lower-case, and number characters. Do not reuse a password.</p><form id="resetPasswordForm"><label class="field-label" for="newPassword">New password</label><input class="input" id="newPassword" type="password" minlength="10" autocomplete="new-password" required /><label class="field-label" for="confirmPassword">Confirm password</label><input class="input" id="confirmPassword" type="password" minlength="10" autocomplete="new-password" required /><p id="resetPasswordMessage" class="auth-message" role="status"></p><div class="form-actions"><button type="submit" class="button button-dark" id="resetPasswordSubmit">Update password</button></div></form></div></div>
     <script src="config.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.6/dist/umd/supabase.min.js" integrity="sha384-GyhLKJoRcMXYwIJUTyx0/uSPYliVPdRYYXJm3G6zyMjKShNs8jLM7WaLpk8Vr4W/" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e" crossorigin="anonymous"></script>

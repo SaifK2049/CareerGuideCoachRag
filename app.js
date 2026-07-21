@@ -732,6 +732,8 @@ function renderAccount() {
   const betaAccess = betaMode && !premium;
   const name = state.profile.displayName || (session && session.user.email && session.user.email.split("@")[0]) || "there";
   document.getElementById("welcomeLabel").textContent = "Welcome, " + name;
+  const workspaceName = document.getElementById("workspaceName");
+  if (workspaceName) workspaceName.textContent = name;
   ["planBadge", "membershipBadge"].forEach(function(id) {
     const badge = document.getElementById(id);
     badge.textContent = premium ? "Premium" : betaAccess ? "Beta" : "Free";
@@ -1884,6 +1886,13 @@ function setView(view) {
   activeView = view;
   document.querySelectorAll(".view").forEach(function(section) { section.classList.toggle("is-visible", section.id === view + "View"); });
   document.querySelectorAll(".nav-item").forEach(function(button) { button.classList.toggle("is-active", button.dataset.view === view); });
+  const sidebar = document.getElementById("appSidebar");
+  const menuButton = document.getElementById("mobileMenuButton");
+  if (sidebar) sidebar.classList.remove("is-open");
+  if (menuButton) {
+    menuButton.setAttribute("aria-expanded", "false");
+    menuButton.setAttribute("aria-label", "Open navigation");
+  }
   render();
 }
 
@@ -2538,6 +2547,13 @@ document.getElementById("createShareLinkButton").addEventListener("click", async
   } catch (error) {
     toast(error.message || "Share link could not be created");
   } finally { this.disabled = false; }
+});
+
+document.getElementById("mobileMenuButton").addEventListener("click", function() {
+  const sidebar = document.getElementById("appSidebar");
+  const isOpen = sidebar.classList.toggle("is-open");
+  this.setAttribute("aria-expanded", String(isOpen));
+  this.setAttribute("aria-label", isOpen ? "Close navigation" : "Open navigation");
 });
 
 document.getElementById("profileForm").addEventListener("submit", async function(event) {
