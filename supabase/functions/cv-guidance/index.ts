@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.6";
 import { handleCors, jsonResponse } from "../_shared/http.ts";
 import { consumeRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
+import { recordOperationalEvent } from "../_shared/telemetry.ts";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -11,6 +12,11 @@ function outputText(response: Record<string, any>): string {
 }
 
 Deno.serve(async (request) => {
+  const startedAt = Date.now();
+  let admin: any = null;
+  let userId = "";
+  let telemetryModel = "";
+  let telemetryUsage: Record<string, number> = {};
   const corsResult = handleCors(request);
   if (corsResult) return corsResult;
   if (request.method !== "POST") return jsonResponse(request, { error: "Method not allowed" }, 405);
@@ -23,9 +29,10 @@ Deno.serve(async (request) => {
     );
     const { data: userData, error: authError } = await userClient.auth.getUser(authorization.replace("Bearer ", ""));
     if (authError || !userData.user) return jsonResponse(request, { error: "Authentication required" }, 401);
+    userId = userData.user.id;
     const { jobId } = await request.json();
     if (!uuidPattern.test(String(jobId || ""))) return jsonResponse(request, { error: "Choose a valid job" }, 400);
-    const admin = createClient<any>(
+    admin = createClient<any>(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { autoRefreshToken: false, persistSession: false } },
@@ -48,6 +55,7 @@ Deno.serve(async (request) => {
     if (!jobResult.data) return jsonResponse(request, { error: "The selected job was not found" }, 404);
 
     const model = Deno.env.get("OPENAI_MODEL") || "gpt-5-mini";
+    telemetryModel = model;
     const aiResponse = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -93,6 +101,7 @@ Deno.serve(async (request) => {
     });
     if (!aiResponse.ok) throw new Error("OpenAI request failed");
     const aiData = await aiResponse.json();
+    telemetryUsage = aiData.usage || {};
     const output = JSON.parse(outputText(aiData) || "{}");
     if (!output.summary || !Array.isArray(output.suggestions)) throw new Error("Invalid guidance response");
     const insert = await admin.from("cv_guidance").insert({
@@ -104,9 +113,18 @@ Deno.serve(async (request) => {
       model,
     }).select().single();
     if (insert.error) throw insert.error;
+    await recordOperationalEvent(admin, {
+      userId, operation: "cv_guidance", outcome: "succeeded", latencyMs: Date.now() - startedAt,
+      model: telemetryModel, inputTokens: telemetryUsage.input_tokens, outputTokens: telemetryUsage.output_tokens,
+    });
     return jsonResponse(request, { guidance: insert.data });
-  } catch (_error) {
+  } catch (error) {
     console.error("cv-guidance failed");
+    await recordOperationalEvent(admin, {
+      userId: userId || undefined, operation: "cv_guidance", outcome: "failed",
+      errorCode: error instanceof Error ? error.message : "CV_GUIDANCE_FAILED", latencyMs: Date.now() - startedAt,
+      model: telemetryModel,
+    });
     return jsonResponse(request, { error: "CV guidance could not be created. Please try again." }, 500);
   }
 });

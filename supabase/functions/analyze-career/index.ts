@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.6";
 import { handleCors, jsonResponse } from "../_shared/http.ts";
 import { consumeRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
+import { recordOperationalEvent } from "../_shared/telemetry.ts";
 
 type RagDocument = {
   id: string;
@@ -403,6 +404,15 @@ Deno.serve(async (request) => {
       model,
       timestamp: new Date().toISOString(),
     }));
+    await recordOperationalEvent(admin, {
+      userId,
+      operation: "analyze_career",
+      outcome: "succeeded",
+      latencyMs: Date.now() - startedAt,
+      model,
+      inputTokens: Number(response.usage?.input_tokens || 0),
+      outputTokens: Number(response.usage?.output_tokens || 0),
+    });
     return jsonResponse(request, {
       analysis: completed,
       summary: normalized.summary,
@@ -436,6 +446,13 @@ Deno.serve(async (request) => {
       status: known.status,
       timestamp: new Date().toISOString(),
     }));
+    await recordOperationalEvent(admin, {
+      userId: userId || undefined,
+      operation: "analyze_career",
+      outcome: "failed",
+      errorCode: known.code,
+      latencyMs: Date.now() - startedAt,
+    });
     return jsonResponse(request, {
       error: known.message,
       code: known.code,

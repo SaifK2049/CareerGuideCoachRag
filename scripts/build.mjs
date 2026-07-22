@@ -28,9 +28,10 @@ for (const [name, value] of [["PUBLIC_TERMS_URL", termsUrl], ["PUBLIC_PRIVACY_UR
 
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
-for (const file of ["index.html", "app.js", "styles.css", "report.html", "report.js", "privacy.html", "beta-terms.html", "_headers", "_redirects"]) {
+for (const file of ["index.html", "app.js", "styles.css", "admin.html", "admin.js", "admin.css", "report.html", "report.js", "privacy.html", "beta-terms.html", "_headers", "_redirects"]) {
   await cp(resolve(root, file), resolve(output, file));
 }
+await cp(resolve(root, "assets"), resolve(output, "assets"), { recursive: true });
 await writeFile(
   resolve(output, "config.js"),
   `window.CAREER_RAG_CONFIG=${JSON.stringify({

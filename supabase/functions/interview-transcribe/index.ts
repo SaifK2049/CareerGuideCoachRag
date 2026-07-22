@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.6";
 import { handleCors, jsonResponse } from "../_shared/http.ts";
 import { consumeRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
+import { recordOperationalEvent } from "../_shared/telemetry.ts";
 
 class TranscriptionError extends Error {
   constructor(public code: string, public status: number, message: string) {
@@ -12,6 +13,10 @@ const maxAudioBytes = 10 * 1024 * 1024;
 const supportedTypes = ["audio/webm", "audio/mp4", "audio/mpeg", "audio/wav", "audio/x-wav", "audio/mpga", "audio/m4a"];
 
 Deno.serve(async (request) => {
+  const startedAt = Date.now();
+  let admin: any = null;
+  let telemetryUserId = "";
+  let telemetryModel = "";
   const corsResult = handleCors(request);
   if (corsResult) return corsResult;
   if (request.method !== "POST") return jsonResponse(request, { error: "Method not allowed" }, 405);
@@ -33,9 +38,10 @@ Deno.serve(async (request) => {
       authorization.replace("Bearer ", ""),
     );
     const userId = userData.user?.id || "";
+    telemetryUserId = userId;
     if (authError || !userId) throw new TranscriptionError("INVALID_SESSION", 401, "Your session is no longer valid.");
 
-    const admin = createClient<any>(
+    admin = createClient<any>(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { autoRefreshToken: false, persistSession: false } },
@@ -69,7 +75,8 @@ Deno.serve(async (request) => {
 
     const openAiForm = new FormData();
     openAiForm.append("file", audio, audio.name || (mediaType.includes("mp4") ? "answer.m4a" : "answer.webm"));
-    openAiForm.append("model", Deno.env.get("OPENAI_TRANSCRIPTION_MODEL") || "gpt-4o-mini-transcribe");
+    telemetryModel = Deno.env.get("OPENAI_TRANSCRIPTION_MODEL") || "gpt-4o-mini-transcribe";
+    openAiForm.append("model", telemetryModel);
     openAiForm.append("response_format", "json");
     openAiForm.append("prompt", `Transcribe this interview-practice answer faithfully with punctuation. Preserve technical terms and do not add content.${question ? ` The interview question is: ${question}` : ""}`);
 
@@ -91,10 +98,19 @@ Deno.serve(async (request) => {
     if (transcript.length > 8000) throw new TranscriptionError("TRANSCRIPT_TOO_LONG", 413, "The transcript is too long for one answer.");
 
     console.log(JSON.stringify({ event: "interview_audio_transcribed", audio_bytes: audio.size, transcript_characters: transcript.length, timestamp: new Date().toISOString() }));
+    await recordOperationalEvent(admin, {
+      userId: telemetryUserId, operation: "interview_transcribe", outcome: "succeeded",
+      latencyMs: Date.now() - startedAt, model: telemetryModel,
+    });
     return jsonResponse(request, { transcript });
   } catch (error) {
     const known = error instanceof TranscriptionError;
     console.error(JSON.stringify({ event: "interview_transcription_failed", code: known ? error.code : "TRANSCRIPTION_FAILED", timestamp: new Date().toISOString() }));
+    await recordOperationalEvent(admin, {
+      userId: telemetryUserId || undefined, operation: "interview_transcribe", outcome: "failed",
+      errorCode: known ? error.code : "TRANSCRIPTION_FAILED", latencyMs: Date.now() - startedAt,
+      model: telemetryModel,
+    });
     return jsonResponse(request, {
       error: known ? error.message : "The recording could not be transcribed. Please try again.",
       code: known ? error.code : "TRANSCRIPTION_FAILED",

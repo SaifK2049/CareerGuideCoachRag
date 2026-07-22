@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.6";
 import { handleCors, jsonResponse } from "../_shared/http.ts";
 import { consumeRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
+import { recordOperationalEvent } from "../_shared/telemetry.ts";
 
 const approvedHosts = [
   "greenhouse.io", "lever.co", "workdayjobs.com", "myworkdayjobs.com",
@@ -26,6 +27,11 @@ function approvedUrl(value: string): URL | null {
 }
 
 Deno.serve(async (request) => {
+  const startedAt = Date.now();
+  let admin: any = null;
+  let userId = "";
+  let telemetryModel = "";
+  let telemetryUsage: Record<string, number> = {};
   const corsResult = handleCors(request);
   if (corsResult) return corsResult;
   if (request.method !== "POST") return jsonResponse(request, { error: "Method not allowed" }, 405);
@@ -38,6 +44,7 @@ Deno.serve(async (request) => {
     );
     const { data: userData, error: authError } = await userClient.auth.getUser(authorization.replace("Bearer ", ""));
     if (authError || !userData.user) return jsonResponse(request, { error: "Authentication required" }, 401);
+    userId = userData.user.id;
     const body = await request.json();
     const url = approvedUrl(String(body.url || ""));
     if (!url) {
@@ -45,7 +52,7 @@ Deno.serve(async (request) => {
         error: "Use an HTTPS job link from LinkedIn, Indeed, Greenhouse, Lever, Workday, SmartRecruiters, or Ashby.",
       }, 400);
     }
-    const admin = createClient<any>(
+    admin = createClient<any>(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { autoRefreshToken: false, persistSession: false } },
@@ -77,6 +84,7 @@ Deno.serve(async (request) => {
       .slice(0, 80000);
     if (text.length < 200) return jsonResponse(request, { error: "No readable job description was found. Paste it instead." }, 422);
     const model = Deno.env.get("OPENAI_MODEL") || "gpt-5-mini";
+    telemetryModel = model;
     const aiResponse = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -110,8 +118,13 @@ Deno.serve(async (request) => {
     });
     if (!aiResponse.ok) throw new Error("OpenAI request failed");
     const aiData = await aiResponse.json();
+    telemetryUsage = aiData.usage || {};
     const job = JSON.parse(outputText(aiData) || "{}");
     if (!job.title || !job.description) throw new Error("Invalid job import");
+    await recordOperationalEvent(admin, {
+      userId, operation: "import_job", outcome: "succeeded", latencyMs: Date.now() - startedAt,
+      model: telemetryModel, inputTokens: telemetryUsage.input_tokens, outputTokens: telemetryUsage.output_tokens,
+    });
     return jsonResponse(request, {
       job: {
         title: String(job.title).slice(0, 200),
@@ -121,8 +134,13 @@ Deno.serve(async (request) => {
         sourceUrl: url.href,
       },
     });
-  } catch (_error) {
+  } catch (error) {
     console.error("import-job failed");
+    await recordOperationalEvent(admin, {
+      userId: userId || undefined, operation: "import_job", outcome: "failed",
+      errorCode: error instanceof Error ? error.message : "IMPORT_JOB_FAILED", latencyMs: Date.now() - startedAt,
+      model: telemetryModel,
+    });
     return jsonResponse(request, { error: "The job could not be imported. Paste the description instead." }, 500);
   }
 });

@@ -34,6 +34,14 @@ const [
   sharedReportFunction,
   reportPage,
   reportScript,
+  adminPage,
+  adminScript,
+  adminStyles,
+  adminMigration,
+  adminFunction,
+  telemetryHelper,
+  redirects,
+  buildScript,
 ] = await Promise.all([
   readFile(resolve(root, "index.html"), "utf8"),
   readFile(resolve(root, "app.js"), "utf8"),
@@ -66,7 +74,49 @@ const [
   readFile(resolve(root, "supabase/functions/shared-report/index.ts"), "utf8"),
   readFile(resolve(root, "report.html"), "utf8"),
   readFile(resolve(root, "report.js"), "utf8"),
+  readFile(resolve(root, "admin.html"), "utf8"),
+  readFile(resolve(root, "admin.js"), "utf8"),
+  readFile(resolve(root, "admin.css"), "utf8"),
+  readFile(resolve(root, "supabase/migrations/20260722130434_admin_analytics_telemetry.sql"), "utf8"),
+  readFile(resolve(root, "supabase/functions/admin-analytics/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/_shared/telemetry.ts"), "utf8"),
+  readFile(resolve(root, "_redirects"), "utf8"),
+  readFile(resolve(root, "scripts/build.mjs"), "utf8"),
 ]);
+
+for (const surface of ["adminAuth", "adminDenied", "adminShell", "overviewView", "usersView", "feedbackView", "systemView"]) {
+  if (!adminPage.includes(`id="${surface}"`)) throw new Error(`Admin surface is missing: ${surface}`);
+}
+for (const operation of ["overview", "users", "feedback", "system", "export"]) {
+  if (!adminFunction.includes(`"${operation}"`)) throw new Error(`Admin analytics operation is missing: ${operation}`);
+}
+if (!adminFunction.includes('app_metadata?.role !== "admin"') || !adminFunction.includes("auth.getUser(token)")) {
+  throw new Error("Admin analytics must verify the current Auth user and protected app metadata");
+}
+if (!adminFunction.includes('Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")') || adminScript.includes("SERVICE_ROLE")) {
+  throw new Error("Elevated analytics access must remain server-side");
+}
+for (const table of ["product_events", "operational_events"]) {
+  if (!adminMigration.includes(`alter table public.${table} enable row level security`)) throw new Error(`${table} must enable RLS`);
+}
+if (!adminMigration.includes("masari-prune-analytics") || !adminMigration.includes("interval '13 months'")) {
+  throw new Error("Analytics retention job is missing");
+}
+if (!adminMigration.includes("revoke all on function public.admin_analytics_overview") || !adminMigration.includes("to service_role")) {
+  throw new Error("Admin aggregate functions must be service-role-only");
+}
+if (!telemetryHelper.includes("operational_events") || !telemetryHelper.includes("try") || !app.includes("record_product_event")) {
+  throw new Error("Fail-open product and operational telemetry is incomplete");
+}
+if (!redirects.includes("/admin /admin.html 200") || !buildScript.includes('"admin.html"') || !buildScript.includes('"admin.js"')) {
+  throw new Error("Admin route or production build assets are missing");
+}
+if (!/\[functions\.admin-analytics\][\s\S]*?verify_jwt = true/.test(supabaseConfig)) {
+  throw new Error("Admin analytics Edge Function must require a JWT");
+}
+if (!adminStyles.includes(".table-wrap") || !adminScript.includes("renderChart")) {
+  throw new Error("Admin responsive tables or data-driven chart are missing");
+}
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
 const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
@@ -126,6 +176,9 @@ for (const header of ["Content-Security-Policy", "Strict-Transport-Security", "X
 }
 if (!/\/\*\.js\s+Cache-Control: no-cache, must-revalidate/.test(headers) || !/\/index\.html\s+Cache-Control: no-cache, must-revalidate/.test(headers)) {
   throw new Error("HTML and JavaScript must revalidate to prevent mixed deployment versions");
+}
+if (!/\/admin\.html\s+Cache-Control: no-cache, must-revalidate/.test(headers)) {
+  throw new Error("Admin HTML must revalidate to prevent mixed deployment versions");
 }
 if (!headers.includes("microphone=(self)")) {
   throw new Error("Premium microphone practice must allow same-origin browser recording");

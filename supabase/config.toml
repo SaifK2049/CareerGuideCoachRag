@@ -509,3 +509,9 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/interview-transcribe/deno.json"
 entrypoint = "./functions/interview-transcribe/index.ts"
+
+[functions.admin-analytics]
+enabled = true
+verify_jwt = true
+import_map = "./functions/admin-analytics/deno.json"
+entrypoint = "./functions/admin-analytics/index.ts"

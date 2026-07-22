@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#F5F1ED" />
+    <title>Masari Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="admin.css" />
+  </head>
+  <body>
+    <main class="admin-auth" id="adminAuth">
+      <form class="auth-box" id="adminLoginForm">
+        <img src="assets/masari-logo.png" alt="Masari" />
+        <h1>Administrator sign in</h1>
+        <p>Use an account with the protected Masari administrator role.</p>
+        <label for="adminEmail">Email</label>
+        <input id="adminEmail" type="email" autocomplete="email" required />
+        <label for="adminPassword">Password</label>
+        <input id="adminPassword" type="password" autocomplete="current-password" minlength="8" required />
+        <button type="submit">Sign in</button>
+        <p class="message" id="adminLoginMessage" role="status"></p>
+        <a href="/">Return to Masari</a>
+      </form>
+    </main>
+
+    <main class="denied hidden" id="adminDenied">
+      <img src="assets/masari-logo.png" alt="Masari" />
+      <h1>Administrator access required</h1>
+      <p>This account is signed in but does not have access to Masari analytics.</p>
+      <div><button type="button" id="deniedSignOut">Sign out</button><a href="/">Return to Masari</a></div>
+    </main>
+
+    <div class="admin-shell hidden" id="adminShell">
+      <aside class="admin-sidebar">
+        <a class="admin-brand" href="/"><img src="assets/masari-logo.png" alt="Masari" /></a>
+        <nav aria-label="Admin analytics">
+          <button class="is-active" data-admin-view="overview">Overview</button>
+          <button data-admin-view="users">Users</button>
+          <button data-admin-view="feedback">Feedback</button>
+          <button data-admin-view="system">System</button>
+        </nav>
+        <div class="sidebar-footer"><span id="adminIdentity"></span><button type="button" id="adminSignOut">Sign out</button></div>
+      </aside>
+
+      <main class="admin-main">
+        <header class="admin-header">
+          <button class="menu-button" id="adminMenu" type="button" aria-label="Open navigation" aria-expanded="false">☰</button>
+          <div><h1 id="adminTitle">Overview</h1><p id="adminSubtitle">Product adoption and account health</p></div>
+          <form class="range-toolbar" id="rangeForm">
+            <div class="presets" aria-label="Date presets">
+              <button type="button" data-days="7">7d</button><button type="button" class="is-active" data-days="30">30d</button><button type="button" data-days="90">90d</button>
+            </div>
+            <label>From<input type="date" id="rangeFrom" required /></label>
+            <label>To<input type="date" id="rangeTo" required /></label>
+            <button type="submit">Apply</button>
+          </form>
+        </header>
+        <p class="page-message" id="pageMessage" role="status"></p>
+
+        <section class="admin-view is-visible" id="overviewView">
+          <dl class="metric-strip" id="overviewMetrics"></dl>
+          <div class="section-grid">
+            <section class="section"><div class="section-head"><h2>Account activity</h2><span id="trendGranularity"></span></div><div id="activityChart" class="chart"></div></section>
+            <section class="section"><h2>Activation funnel</h2><div id="activationFunnel" class="funnel"></div></section>
+          </div>
+          <section class="section"><div class="section-head"><h2>Feature adoption</h2><button type="button" data-export="feature_usage">Export CSV</button></div><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Users</th><th>Completed</th><th>Failed</th><th>Success</th></tr></thead><tbody id="featureRows"></tbody></table></div></section>
+          <div class="section-grid">
+            <section class="section"><h2>Application pipeline</h2><div id="applicationPipeline" class="compact-list"></div></section>
+            <section class="section"><h2>Plans and feedback</h2><div id="planFeedbackSummary" class="compact-list"></div></section>
+          </div>
+        </section>
+
+        <section class="admin-view" id="usersView">
+          <form class="filter-bar" id="userFilters"><input id="userSearch" type="search" placeholder="Search email, name, or user ID" /><select id="userPlan"><option value="">All plans</option><option value="free">Free</option><option value="premium">Premium</option></select><select id="userOnboarding"><option value="">All onboarding states</option><option value="complete">Complete</option><option value="incomplete">Incomplete</option></select><button type="submit">Filter</button><button type="button" data-export="users">Export CSV</button></form>
+          <section class="section"><div class="section-head"><h2>User directory</h2><span id="userCount"></span></div><div class="table-wrap"><table><thead><tr><th>User</th><th>Joined</th><th>Last active</th><th>Plan</th><th>Onboarding</th><th>Jobs</th><th>Analyses</th><th>Interviews</th></tr></thead><tbody id="userRows"></tbody></table></div><div class="pagination" id="userPagination"></div></section>
+        </section>
+
+        <section class="admin-view" id="feedbackView">
+          <form class="filter-bar" id="feedbackFilters"><input id="feedbackSearch" type="search" placeholder="Search feedback or sender" /><select id="feedbackCategory"><option value="">All categories</option><option value="analysis">Analysis quality</option><option value="bug">Something is broken</option><option value="idea">Product idea</option><option value="privacy">Privacy</option><option value="other">Other</option></select><button type="submit">Filter</button><button type="button" data-export="feedback">Export CSV</button></form>
+          <section class="section"><div class="section-head"><h2>Submitted feedback</h2><span id="feedbackCount"></span></div><div class="feedback-list" id="feedbackRows"></div><div class="pagination" id="feedbackPagination"></div></section>
+        </section>
+
+        <section class="admin-view" id="systemView">
+          <dl class="metric-strip" id="systemMetrics"></dl>
+          <section class="section"><div class="section-head"><h2>Workflow health</h2><button type="button" data-export="operational_health">Export CSV</button></div><div class="table-wrap"><table><thead><tr><th>Operation</th><th>Succeeded</th><th>Failed</th><th>Success</th><th>p50</th><th>p95</th><th>Input tokens</th><th>Output tokens</th></tr></thead><tbody id="operationRows"></tbody></table></div></section>
+          <div class="section-grid"><section class="section"><h2>Failure codes</h2><div id="failureRows" class="compact-list"></div></section><section class="section"><h2>Models</h2><div id="modelRows" class="compact-list"></div></section></div>
+        </section>
+      </main>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
+    <script src="admin.js"></script>
+  </body>
+</html>

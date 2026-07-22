@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.6";
 import { handleCors, jsonResponse } from "../_shared/http.ts";
 import { consumeRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
+import { recordOperationalEvent } from "../_shared/telemetry.ts";
 
 type Question = {
   category: string;
@@ -257,6 +258,7 @@ async function assessInterview(
 }
 
 Deno.serve(async (request) => {
+  const startedAt = Date.now();
   const corsResult = handleCors(request);
   if (corsResult) return corsResult;
   if (request.method !== "POST") return jsonResponse(request, { error: "Method not allowed" }, 405);
@@ -264,6 +266,9 @@ Deno.serve(async (request) => {
   let admin: any = null;
   let userId = "";
   let reserved = false;
+  let telemetryAction = "generate";
+  let telemetryModel = "";
+  let telemetryUsage: Record<string, number> = {};
   try {
     const authorization = request.headers.get("Authorization");
     if (!authorization) throw new InterviewError("AUTHENTICATION_REQUIRED", 401, "Authentication required.");
@@ -283,6 +288,7 @@ Deno.serve(async (request) => {
 
     const payload = await request.json() as { action?: string; jobId?: string; sessionId?: string };
     const action = String(payload.action || "generate");
+    telemetryAction = action;
     if (!new Set(["generate", "assess"]).has(action)) {
       throw new InterviewError("INVALID_REQUEST", 400, "This interview action is not supported.");
     }
@@ -301,7 +307,13 @@ Deno.serve(async (request) => {
     if (!rateLimit.allowed) {
       return rateLimitResponse(rateLimit, Object.fromEntries(jsonResponse(request, {}).headers.entries()));
     }
-    if (action === "assess") return await assessInterview(request, userClient, admin, userId, sessionId);
+    if (action === "assess") {
+      const assessmentResponse = await assessInterview(request, userClient, admin, userId, sessionId);
+      await recordOperationalEvent(admin, {
+        userId, operation: "interview_assess", outcome: "succeeded", latencyMs: Date.now() - startedAt,
+      });
+      return assessmentResponse;
+    }
 
     const [{ data: job, error: jobError }, { data: profile, error: profileError }, { data: evidence, error: evidenceError }, { data: access, error: accessError }, { data: usage, error: usageError }] =
       await Promise.all([
@@ -373,6 +385,7 @@ Deno.serve(async (request) => {
     }
 
     const model = Deno.env.get("OPENAI_MODEL") || "gpt-5-mini";
+    telemetryModel = model;
     let aiResponse: Response;
     try {
       aiResponse = await fetch("https://api.openai.com/v1/responses", {
@@ -429,6 +442,7 @@ Deno.serve(async (request) => {
       throw new InterviewError("AI_UNAVAILABLE", 503, "Interview preparation is temporarily unavailable.");
     }
     const aiResult = await aiResponse.json() as Record<string, any>;
+    telemetryUsage = aiResult.usage || {};
     const text = outputText(aiResult);
     if (!text) throw new InterviewError("AI_REFUSED", 422, "Questions could not be created from this job context.");
 
@@ -462,6 +476,10 @@ Deno.serve(async (request) => {
       question_count: questions.length,
       timestamp: new Date().toISOString(),
     }));
+    await recordOperationalEvent(admin, {
+      userId, operation: "interview_generate", outcome: "succeeded", latencyMs: Date.now() - startedAt,
+      model: telemetryModel, inputTokens: telemetryUsage.input_tokens, outputTokens: telemetryUsage.output_tokens,
+    });
     return jsonResponse(request, {
       practice,
       access: {
@@ -482,6 +500,14 @@ Deno.serve(async (request) => {
       code: known ? error.code : "INTERVIEW_PREP_FAILED",
       timestamp: new Date().toISOString(),
     }));
+    await recordOperationalEvent(admin, {
+      userId: userId || undefined,
+      operation: telemetryAction === "assess" ? "interview_assess" : "interview_generate",
+      outcome: "failed",
+      errorCode: known ? error.code : "INTERVIEW_PREP_FAILED",
+      latencyMs: Date.now() - startedAt,
+      model: telemetryModel,
+    });
     return jsonResponse(request, {
       error: known ? error.message : "Interview practice could not be created. Please try again.",
       code: known ? error.code : "INTERVIEW_PREP_FAILED",

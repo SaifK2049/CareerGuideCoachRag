@@ -1,5 +1,5 @@
 const STORAGE_KEY = "career-rag-workspace-v1";
-const PRIVACY_NOTICE_VERSION = "2026-07-20";
+const PRIVACY_NOTICE_VERSION = "2026-07-22";
 const config = window.CAREER_RAG_CONFIG || {};
 const initialAuthLinkType = new URLSearchParams(window.location.hash.slice(1)).get("type")
   || new URLSearchParams(window.location.search).get("type")
@@ -22,12 +22,42 @@ const cloud = config.supabaseUrl && config.supabasePublishableKey && window.supa
 document.getElementById("feedbackButton").classList.toggle("hidden", config.feedbackEnabled === false);
 let session = null;
 let cloudReady = false;
+const analyticsSessionId = (function() {
+  const key = "masari-analytics-session";
+  let value = sessionStorage.getItem(key);
+  if (!value) { value = crypto.randomUUID(); sessionStorage.setItem(key, value); }
+  return value;
+})();
+let appOpenTracked = false;
 let saveQueue = Promise.resolve();
 let accountAccess = { plan: "free", status: "free", rag_used: 0, rag_limit: betaMode ? 10 : 2, features: {} };
 let onboardingStep = 1;
 const pendingAnalysisRequests = {};
 const captchaTokens = { signin: "", signup: "" };
 const turnstileWidgets = { signin: null, signup: null };
+
+function analyticsErrorCode(error, fallback) {
+  const raw = error && (error.code || error.name) || fallback || "WORKFLOW_FAILED";
+  return String(raw).toUpperCase().replace(/[^A-Z0-9_:-]/g, "_").slice(0, 80) || "WORKFLOW_FAILED";
+}
+
+function trackProductEvent(eventName, surface, workflow, error) {
+  if (!cloud || !session || config.localPreview) return Promise.resolve();
+  return cloud.rpc("record_product_event", {
+    p_event_name: eventName,
+    p_surface: surface || null,
+    p_workflow: workflow || null,
+    p_error_code: eventName === "workflow_failed" ? analyticsErrorCode(error) : null,
+    p_session_id: analyticsSessionId,
+    p_app_version: String(config.appVersion || "unknown").slice(0, 40)
+  }).then(function() {}, function() {});
+}
+
+function trackAppOpen() {
+  if (appOpenTracked) return;
+  appOpenTracked = true;
+  trackProductEvent("app_open", activeView, null);
+}
 
 function ensureTurnstile(kind) {
   if (!config.turnstileSiteKey || !window.turnstile || turnstileWidgets[kind] !== null) return;
@@ -1081,6 +1111,7 @@ async function ensureInterviewAssessment(sessionId, force) {
   const practice = state.interviewSessions.find(function(item) { return item.id === sessionId; });
   if (!practice || practice.status !== "completed" || (!force && practice.assessment_status === "succeeded")) return;
   const task = (async function() {
+    trackProductEvent("workflow_started", "interview", "interview_assessment");
     practice.assessment_status = "pending";
     practice.assessment_failure_code = null;
     renderInterviewPractice();
@@ -1098,11 +1129,13 @@ async function ensureInterviewAssessment(sessionId, force) {
       }
       renderInterviewPractice();
       toast("Your six-answer review is ready");
+      trackProductEvent("workflow_completed", "interview", "interview_assessment");
     } catch (error) {
       const current = state.interviewSessions.find(function(item) { return item.id === sessionId; });
       if (current) current.assessment_status = "failed";
       renderInterviewPractice();
       toast(await functionErrorMessage(error, "Your answer review could not be created"));
+      trackProductEvent("workflow_failed", "interview", "interview_assessment", error);
     } finally {
       pendingInterviewAssessments.delete(sessionId);
     }
@@ -1224,6 +1257,7 @@ async function generateInterviewPractice() {
   if (!record.job.description.trim()) { toast("Add the job description before generating practice"); return; }
   button.disabled = true;
   button.textContent = "Building your round…";
+  trackProductEvent("workflow_started", "interview", "interview_practice");
   try {
     if (config.localPreview) {
       const practice = {
@@ -1249,8 +1283,10 @@ async function generateInterviewPractice() {
     await loadCloudState();
     render();
     toast("Practice round ready");
+    trackProductEvent("workflow_completed", "interview", "interview_practice");
   } catch (error) {
     toast(await functionErrorMessage(error, "Interview practice could not be created"));
+    trackProductEvent("workflow_failed", "interview", "interview_practice", error);
   } finally {
     button.disabled = false;
     button.textContent = "Generate 6 questions";
@@ -1437,6 +1473,7 @@ function updateApplicationStatus(jobId, pathId, status) {
   saveState();
   render();
   toast("Application moved to " + status.replace("_", " "));
+  trackProductEvent("workflow_completed", "applications", "application");
 }
 
 function renderPaths(path) {
@@ -1506,6 +1543,7 @@ function renderActionPlan(path) {
         }).eq("id", item.id).eq("user_id", session.user.id);
         if (result.error) { toast(result.error.message); await loadCloudState(); }
       }
+      if (item.status === "completed") trackProductEvent("workflow_completed", "plan", "action_plan");
       renderActionPlan(activePath());
     });
   });
@@ -1911,6 +1949,7 @@ function setView(view) {
     menuButton.setAttribute("aria-label", "Open navigation");
   }
   render();
+  trackProductEvent("view_open", view, null);
 }
 
 function showSurface(surface) {
@@ -2191,6 +2230,7 @@ document.getElementById("onboardingForm").addEventListener("submit", async funct
   event.preventDefault();
   const message = document.getElementById("onboardingMessage");
   message.textContent = "Creating your personal workspace…";
+  trackProductEvent("workflow_started", "onboarding", "onboarding");
   try {
     const pathId = crypto.randomUUID();
     const file = document.getElementById("onboardingCvFile").files[0];
@@ -2232,7 +2272,12 @@ document.getElementById("onboardingForm").addEventListener("submit", async funct
     showSurface("app");
     render();
     toast(actionWarning || (actionCreated ? "Workspace ready and your first action plan was created" : "Your workspace is ready"));
-  } catch (error) { message.textContent = error.message || "Setup could not be completed."; }
+    trackProductEvent("workflow_completed", "onboarding", "onboarding");
+    if (cvText || file) trackProductEvent("workflow_completed", "onboarding", "cv");
+  } catch (error) {
+    message.textContent = error.message || "Setup could not be completed.";
+    trackProductEvent("workflow_failed", "onboarding", "onboarding", error);
+  }
 });
 ["upgradeButton", "membershipActionButton"].forEach(function(id) {
   document.getElementById(id).addEventListener("click", function() {
@@ -2257,6 +2302,7 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
   pendingAnalysisRequests[path.id] = requestId;
   button.disabled = true;
   button.textContent = "Analyzing…";
+  trackProductEvent("workflow_started", "overview", "analysis");
   clearAnalysisTimers();
   setAnalysisStatus(path.id, "preparing", "Preparing your private evidence set…", requestId);
   analysisTimers.push(window.setTimeout(function() {
@@ -2303,11 +2349,13 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
     toast(actionWarning || (actionCreated
       ? "Cited analysis saved and 1 action was added to your plan"
       : result.data.replayed ? "Saved analysis restored" : "Cited analysis saved privately"));
+    trackProductEvent("workflow_completed", "overview", "analysis");
   } catch (error) {
     clearAnalysisTimers();
     const message = await functionErrorMessage(error, "Analysis failed");
     setAnalysisStatus(path.id, "failed", message, requestId);
     toast(message);
+    trackProductEvent("workflow_failed", "overview", "analysis", error);
   } finally { button.disabled = false; button.textContent = "Run cited analysis"; }
 });
 
@@ -2370,6 +2418,7 @@ document.getElementById("jobForm").addEventListener("submit", function(event) {
   if (record.status === "applied" && !record.appliedAt) record.appliedAt = new Date().toISOString().slice(0, 10);
   if (existing) Object.assign(existing, record); else path.jobs.unshift(record);
   saveState(); closeModal("jobModal"); render(); toast(existing ? "Application updated" : "Job description added to this path");
+  trackProductEvent("workflow_completed", "paths", "job");
 });
 
 document.getElementById("planItemForm").addEventListener("submit", async function(event) {
@@ -2416,6 +2465,7 @@ document.getElementById("planItemForm").addEventListener("submit", async functio
     closeModal("planItemModal");
     setView("plan");
     toast("Action saved");
+    trackProductEvent("workflow_completed", "plan", "action_plan");
   } catch (error) { toast(error.message || "Action could not be saved"); }
 });
 
@@ -2552,6 +2602,7 @@ document.getElementById("createShareLinkButton").addEventListener("click", async
     const result = await cloud.from("shared_reports").insert(row).select().single();
     if (result.error) throw result.error;
     state.sharedReports.unshift(result.data);
+    trackProductEvent("workflow_completed", "progress", "report_share");
     const shareUrl = window.location.origin + "/report.html#" + token;
     renderSharedReports();
     try {
@@ -2563,6 +2614,7 @@ document.getElementById("createShareLinkButton").addEventListener("click", async
     }
   } catch (error) {
     toast(error.message || "Share link could not be created");
+    trackProductEvent("workflow_failed", "progress", "report_share", error);
   } finally { this.disabled = false; }
 });
 
@@ -2591,6 +2643,7 @@ document.getElementById("profileForm").addEventListener("submit", async function
     message.textContent = "Personal details saved";
     renderAccount();
     toast("Career profile updated");
+    if (state.cv.text || state.cv.fileName) trackProductEvent("workflow_completed", "profile", "cv");
   } catch (error) {
     message.textContent = "";
     toast(error.message || "Personal details could not be saved");
@@ -2610,6 +2663,7 @@ document.getElementById("feedbackForm").addEventListener("submit", async functio
   status.classList.remove("is-success");
   status.textContent = "Sending…";
   button.disabled = true;
+  trackProductEvent("workflow_started", "feedback", "feedback");
   try {
     const result = await cloud.from("beta_feedback").insert({
       user_id: session.user.id,
@@ -2626,8 +2680,10 @@ document.getElementById("feedbackForm").addEventListener("submit", async functio
     status.textContent = "Thank you—your feedback was saved privately.";
     this.reset();
     window.setTimeout(function() { closeModal("feedbackModal"); }, 900);
+    trackProductEvent("workflow_completed", "feedback", "feedback");
   } catch (error) {
     status.textContent = error.message || "Feedback could not be sent.";
+    trackProductEvent("workflow_failed", "feedback", "feedback", error);
   } finally {
     button.disabled = false;
   }
@@ -2740,6 +2796,7 @@ async function initializeCloud() {
           document.querySelector(".storage-status span:last-child").textContent = "Encrypted cloud workspace";
           document.getElementById("saveState").textContent = "Saved privately";
           showSignedInSurface();
+          trackAppOpen();
           if (restoredAction) toast("Added 1 action from your latest cited analysis");
           if (authEvent === "PASSWORD_RECOVERY") openPasswordSetup("recovery");
           else if (passwordSetupMode === "invite") openPasswordSetup("invite");
@@ -2762,6 +2819,7 @@ async function initializeCloud() {
     const restoredAction = await ensureLatestAnalysisAction().catch(function() { return false; });
     document.getElementById("saveState").textContent = "Saved privately";
     showSignedInSurface();
+    trackAppOpen();
     if (restoredAction) toast("Added 1 action from your latest cited analysis");
     if (passwordSetupMode === "invite") openPasswordSetup("invite");
   } else {

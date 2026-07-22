@@ -104,6 +104,8 @@ Complete this with two independent accounts before inviting testers:
 - [ ] Retrying the same request does not consume a second quota unit.
 - [ ] A forced OpenAI failure does not consume quota.
 - [ ] Feedback arrives without CV or job text in its context.
+- [ ] Admin analytics rejects non-admin accounts and excludes CV, job-description, evidence, interview, notes, contacts, and AI-output content.
+- [ ] Product and operational telemetry contains only controlled fields and the 13-month retention job is active.
 - [ ] Account export contains the profile, paths, jobs, evidence, analyses, audit events, feedback, and stored-file metadata.
 - [ ] Workspace clear removes database content and stored CV files.
 - [ ] Password-confirmed account deletion revokes the session and removes the account.

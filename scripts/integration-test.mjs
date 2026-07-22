@@ -26,7 +26,7 @@ async function request(path, { token = anonKey, apiKey = anonKey, method = "GET"
   return { response, data };
 }
 
-async function createUser(label) {
+async function createUser(label, appMetadata = {}) {
   const email = `masari-${label}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
   const password = "Masari-Test-Password-42!";
   let created;
@@ -40,6 +40,7 @@ async function createUser(label) {
         password,
         email_confirm: true,
         user_metadata: { display_name: `${label} User` },
+        app_metadata: appMetadata,
       },
     });
     if (![502, 503].includes(created.response.status)) break;
@@ -102,6 +103,68 @@ try {
 
   const alice = await createUser("Alice");
   const bob = await createUser("Bob");
+  const analyticsAdmin = await createUser("Analytics Admin", { role: "admin" });
+
+  const validProductEvent = await rest("rpc/record_product_event", alice, {
+    method: "POST",
+    body: {
+      p_event_name: "app_open",
+      p_surface: "overview",
+      p_workflow: null,
+      p_error_code: null,
+      p_session_id: crypto.randomUUID(),
+      p_app_version: "integration",
+    },
+  });
+  assert.equal(validProductEvent.response.status, 204, JSON.stringify(validProductEvent.data));
+  const invalidProductEvent = await rest("rpc/record_product_event", alice, {
+    method: "POST",
+    body: {
+      p_event_name: "arbitrary_event",
+      p_surface: "overview",
+      p_workflow: null,
+      p_error_code: null,
+      p_session_id: crypto.randomUUID(),
+      p_app_version: "integration",
+    },
+  });
+  assert.equal(invalidProductEvent.response.ok, false, "unapproved product events must be rejected");
+  const browserTelemetryRead = await rest("product_events?select=*", alice);
+  assert.equal(browserTelemetryRead.response.ok, false, "browser users cannot read product telemetry");
+  const browserOperationalInsert = await rest("operational_events", alice, {
+    method: "POST",
+    body: { operation: "analyze_career", outcome: "succeeded", latency_ms: 1 },
+  });
+  assert.equal(browserOperationalInsert.response.ok, false, "browser users cannot write operational telemetry");
+
+  const browserAdminRpc = await rest("rpc/admin_analytics_overview", analyticsAdmin, {
+    method: "POST",
+    body: { p_from: new Date(Date.now() - 86400000).toISOString(), p_to: new Date(Date.now() + 86400000).toISOString() },
+  });
+  assert.equal(browserAdminRpc.response.ok, false, "admin aggregate RPCs remain inaccessible to browser roles");
+  const serviceAdminRpc = await serviceRest("rpc/admin_analytics_overview", {
+    method: "POST",
+    body: { p_from: new Date(Date.now() - 86400000).toISOString(), p_to: new Date(Date.now() + 86400000).toISOString() },
+  });
+  assert.equal(serviceAdminRpc.response.status, 200, JSON.stringify(serviceAdminRpc.data));
+  assert.equal(serviceAdminRpc.data.totals.total_users >= 3, true);
+
+  const nonAdminAnalytics = await request("/functions/v1/admin-analytics", {
+    token: alice.token,
+    method: "POST",
+    body: { operation: "overview", from: new Date(Date.now() - 86400000).toISOString(), to: new Date(Date.now() + 86400000).toISOString() },
+  });
+  assert.equal(nonAdminAnalytics.response.status, 403, JSON.stringify(nonAdminAnalytics.data));
+  const adminAnalytics = await request("/functions/v1/admin-analytics", {
+    token: analyticsAdmin.token,
+    method: "POST",
+    body: { operation: "overview", from: new Date(Date.now() - 86400000).toISOString(), to: new Date(Date.now() + 86400000).toISOString() },
+  });
+  assert.equal(adminAnalytics.response.status, 200, JSON.stringify(adminAnalytics.data));
+  const adminPayload = JSON.stringify(adminAnalytics.data);
+  for (const forbidden of ["cv_text", "description", "answer_text", "findings", "contact_email", "stripe_customer_id"]) {
+    assert.equal(adminPayload.includes(`"${forbidden}"`), false, `admin overview must not expose ${forbidden}`);
+  }
 
   const aliceProfile = await rest(`career_profiles?user_id=eq.${alice.id}&select=*`, alice);
   assert.equal(aliceProfile.response.status, 200, JSON.stringify(aliceProfile.data));

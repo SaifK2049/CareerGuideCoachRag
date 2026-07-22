@@ -48,6 +48,7 @@ Deno.serve(async (request) => {
       userClient.from("interview_practice_sessions").select("*").eq("user_id", userId).order("started_at"),
       userClient.from("interview_practice_answers").select("*").eq("user_id", userId).order("created_at"),
       userClient.from("interview_game_profiles").select("*").eq("user_id", userId).maybeSingle(),
+      admin.from("product_events").select("event_name,surface,workflow,error_code,session_id,app_version,created_at").eq("user_id", userId).order("created_at"),
       admin.storage.from("private-cvs").list(userId, { limit: 100 }),
     ]);
     const error = queries.find((result) => result.error)?.error;
@@ -77,7 +78,8 @@ Deno.serve(async (request) => {
       interview_practice_sessions: queries[12].data || [],
       interview_practice_answers: queries[13].data || [],
       interview_game_profile: queries[14].data,
-      stored_cv_files: (queries[15].data || []).map((file) => ({
+      product_events: queries[15].data || [],
+      stored_cv_files: (queries[16].data || []).map((file) => ({
         name: file.name,
         created_at: file.created_at,
         updated_at: file.updated_at,
