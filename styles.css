@@ -486,6 +486,9 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
 @media(max-width:460px){.topbar-actions .button-dark span{display:none}.topbar-actions .button-dark{padding:0 12px}.stat-grid,.cockpit-stats{grid-template-columns:1fr}.stat-block{border-right:0!important;border-bottom:1px solid var(--line)}.stat-block:last-child{border-bottom:0}.section-heading>div:last-child{display:flex;flex-wrap:wrap;gap:8px}.page-intro h2{font-size:30px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
 
+/* Orynta visual adjustments */
+.kanban-column{background:var(--canvas)}
+
 /* Guided career workspace refinements */
 .sidebar{background:var(--canvas);border-right-color:var(--line)}
 .sidebar-brand{background:var(--canvas);border-bottom-color:var(--line)}

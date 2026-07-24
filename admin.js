@@ -91,7 +91,7 @@ async function loadFeedback(page) {
 
 async function sendWaitlistInvite(button) {
   const email = button.dataset.email || "this person";
-  if (!window.confirm(`Send a Masari account invitation to ${email}?`)) return;
+  if (!window.confirm(`Send a Orynta account invitation to ${email}?`)) return;
   button.disabled = true;
   button.textContent = "Sending…";
   try {
@@ -145,7 +145,7 @@ document.getElementById("adminSignOut").onclick = signOut; document.getElementBy
 document.getElementById("adminMenu").onclick = function() { const sidebar = document.querySelector(".admin-sidebar"); const open = sidebar.classList.toggle("is-open"); this.setAttribute("aria-expanded", String(open)); };
 
 async function initialize() {
-  if (!adminCloud) { document.getElementById("adminLoginMessage").textContent = "Masari is not configured."; return; }
+  if (!adminCloud) { document.getElementById("adminLoginMessage").textContent = "Orynta is not configured."; return; }
   const sessionResult = await adminCloud.auth.getSession(); adminSession = sessionResult.data.session;
   if (!adminSession) return;
   const to = new Date(); const from = new Date(to.getTime() - 29 * 86400000); document.getElementById("rangeFrom").value = isoDate(from); document.getElementById("rangeTo").value = isoDate(to);

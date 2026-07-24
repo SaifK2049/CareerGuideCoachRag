@@ -125,7 +125,7 @@ const CERTS = {
 };
 
 const demoState = {
-  profile: { displayName: "Demo user", careerGoal: "Explore Masari", experienceLevel: "mid", country: "", onboardingComplete: true, betaTermsAcceptedAt: "2026-07-16T00:00:00.000Z", privacyNoticeVersion: PRIVACY_NOTICE_VERSION },
+  profile: { displayName: "Demo user", careerGoal: "Explore Orynta", experienceLevel: "mid", country: "", onboardingComplete: true, betaTermsAcceptedAt: "2026-07-16T00:00:00.000Z", privacyNoticeVersion: PRIVACY_NOTICE_VERSION },
   activePathId: "path-cloud",
   cv: { fileName: "", text: "", uploadedAt: "" },
   paths: [{
@@ -477,7 +477,7 @@ function renderAnalysisResult(path) {
       : !hasEvidence
         ? '<button type="button" class="button button-dark" data-empty-action="profile">Add CV or evidence</button>'
         : '<button type="button" class="button button-dark" data-empty-action="analysis">Run your first analysis</button>';
-    box.innerHTML = '<div class="empty-state empty-state-action"><strong>Your career picture starts here</strong><p>Add a target role and the evidence behind your experience. Masari will show what is already working and what to strengthen next.</p>' + action + '</div>';
+    box.innerHTML = '<div class="empty-state empty-state-action"><strong>Your career picture starts here</strong><p>Add a target role and the evidence behind your experience. Orynta will show what is already working and what to strengthen next.</p>' + action + '</div>';
     bindEmptyActions(box);
     return;
   }
@@ -675,7 +675,7 @@ function setupProgress(path) {
   }));
   return [
     { label: "Share your CV", detail: "Add your experience and the direction you want next.", done: profileComplete && hasCv, action: "profile", cta: hasCv ? "Review CV" : "Add CV" },
-    { label: "Understand the gap", detail: "Add a target role so Masari can compare what matters.", done: hasJob, action: "job", cta: "Add a target role" },
+    { label: "Understand the gap", detail: "Add a target role so Orynta can compare what matters.", done: hasJob, action: "job", cta: "Add a target role" },
     { label: "Move with a plan", detail: "Run your analysis and choose the work that moves you forward.", done: hasAnalysis, action: "analysis", cta: "See my analysis" }
   ];
 }
@@ -737,7 +737,7 @@ function membershipFeaturesMarkup(rows) {
 function renderMembershipComparison() {
   const premium = accountAccess.plan === "premium";
   const betaAccess = betaMode && !premium;
-  const currentName = premium ? "Masari Premium" : betaAccess ? "Masari Private Beta" : "Masari Free";
+  const currentName = premium ? "Orynta Premium" : betaAccess ? "Orynta Private Beta" : "Orynta Free";
   const analysisLimit = Number(accountAccess.rag_limit || (betaAccess ? 10 : premium ? 50 : 2));
   const currentFeatures = [
     ["Cited AI analyses", analysisLimit + " per month"],
@@ -787,7 +787,7 @@ function renderAccount() {
   });
   document.getElementById("upgradeButton").classList.toggle("hidden", premium || !billingEnabled);
   document.getElementById("membershipActionButton").classList.remove("hidden");
-  document.getElementById("membershipName").textContent = premium ? "Masari Premium" : betaAccess ? "Masari Private Beta" : "Masari Free";
+  document.getElementById("membershipName").textContent = premium ? "Orynta Premium" : betaAccess ? "Orynta Private Beta" : "Orynta Free";
   document.getElementById("membershipDescription").textContent = premium
     ? "Advanced career analysis and planning are active."
     : betaAccess
@@ -821,8 +821,8 @@ function render() {
     renderAnalysisResult(null);
     renderJobs(document.getElementById("recentJobs"), []);
     document.getElementById("latestAnalysisStat").textContent = "Not run";
-    document.getElementById("pathList").innerHTML = '<div class="empty-state empty-state-action"><strong>Start with the role you want next</strong><p>Masari will compare that direction with your experience and show what matters most.</p><button type="button" class="button button-dark" data-empty-action="path">Add a target role</button></div>';
-    document.getElementById("pathJobs").innerHTML = '<div class="empty-state empty-state-action"><strong>Add a role to understand the gap</strong><p>Paste a job description and Masari will identify recurring requirements.</p><button type="button" class="button button-dark" data-empty-action="job">Add a target role</button></div>';
+    document.getElementById("pathList").innerHTML = '<div class="empty-state empty-state-action"><strong>Start with the role you want next</strong><p>Orynta will compare that direction with your experience and show what matters most.</p><button type="button" class="button button-dark" data-empty-action="path">Add a target role</button></div>';
+    document.getElementById("pathJobs").innerHTML = '<div class="empty-state empty-state-action"><strong>Add a role to understand the gap</strong><p>Paste a job description and Orynta will identify recurring requirements.</p><button type="button" class="button button-dark" data-empty-action="job">Add a target role</button></div>';
     bindEmptyActions(document.getElementById("pathList"));
     bindEmptyActions(document.getElementById("pathJobs"));
     renderSetupChecklist(null);
@@ -879,7 +879,7 @@ function render() {
 
 function renderSkills(items) {
   const box = document.getElementById("skillLandscape");
-  if (!items.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>Add a target role to see what matters</strong><p>Masari will compare recurring role requirements with the evidence you have already built.</p><button type="button" class="button button-light" data-empty-action="job">Add a target role</button></div>'; bindEmptyActions(box); return; }
+  if (!items.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>Add a target role to see what matters</strong><p>Orynta will compare recurring role requirements with the evidence you have already built.</p><button type="button" class="button button-light" data-empty-action="job">Add a target role</button></div>'; bindEmptyActions(box); return; }
   box.innerHTML = items.slice(0, 8).map(function(item) {
     const kind = item.coverage >= 70 ? "good" : item.coverage >= 35 ? "warn" : "gap";
     const label = item.coverage >= 70 ? "Covered" : item.coverage >= 35 ? "Partial" : "Gap";
@@ -889,7 +889,7 @@ function renderSkills(items) {
 
 function renderFocus(items) {
   const box = document.getElementById("focusPlan");
-  if (!items.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>Your next step will appear here</strong><p>Add a target role and Masari will identify the work most likely to strengthen your position.</p><button type="button" class="button button-light" data-empty-action="job">Add a target role</button></div>'; bindEmptyActions(box); return; }
+  if (!items.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>Your next step will appear here</strong><p>Add a target role and Orynta will identify the work most likely to strengthen your position.</p><button type="button" class="button button-light" data-empty-action="job">Add a target role</button></div>'; bindEmptyActions(box); return; }
   box.innerHTML = items.slice(0, 3).map(function(item, index) {
     const cert = CERTS[item.skill];
     const action = item.coverage < 35 ? "Build evidence for " + item.skill + " before choosing a certification." : "Strengthen your " + item.skill + " evidence with one measurable project.";
@@ -1244,7 +1244,7 @@ async function startInterviewRecording(question) {
 function interviewAssessmentMarkup(practice) {
   if (practice.status !== "completed") return "";
   const status = practice.assessment_status || "not_started";
-  if (status === "pending") return '<section class="interview-assessment is-pending" aria-live="polite"><p class="eyebrow">Round review</p><h3>Reviewing your six answers…</h3><p>Masari is looking for relevance, evidence, structure, judgement, and reflection.</p></section>';
+  if (status === "pending") return '<section class="interview-assessment is-pending" aria-live="polite"><p class="eyebrow">Round review</p><h3>Reviewing your six answers…</h3><p>Orynta is looking for relevance, evidence, structure, judgement, and reflection.</p></section>';
   if (status !== "succeeded" || !practice.assessment) return '<section class="interview-assessment"><p class="eyebrow">Round review</p><h3>' + (status === "failed" ? "Your review needs another try" : "Your six answers are ready to review") + '</h3><p>The review evaluates your answer content and gives you a focused next practice exercise.</p><button type="button" class="button button-dark" data-generate-interview-feedback>Generate my feedback</button></section>';
   const review = practice.assessment;
   function references(item) { return (item.question_indexes || []).map(function(index) { return "Q" + (Number(index) + 1); }).join(", "); }
@@ -1414,7 +1414,7 @@ function renderInterviewPractice() {
   const stage = document.getElementById("interviewStage");
   const practice = sessions.find(function(item) { return item.id === selectedInterviewSessionId; });
   if (!practice) {
-    stage.innerHTML = '<div class="empty-state empty-state-action"><strong>Prepare for the interview you want</strong><p>Choose a target role and Masari will shape questions around your experience and the role requirements.</p></div>';
+    stage.innerHTML = '<div class="empty-state empty-state-action"><strong>Prepare for the interview you want</strong><p>Choose a target role and Orynta will shape questions around your experience and the role requirements.</p></div>';
     return;
   }
   const questions = practice.questions || [];
@@ -1607,7 +1607,7 @@ function renderProgress(path) {
 function renderCvGuidance(guidance) {
   const box = document.getElementById("cvGuidanceResult");
   if (!guidance) {
-    box.innerHTML = '<div class="empty-state">Select a job to receive truthful, job-specific CV recommendations. Masari never invents experience.</div>';
+    box.innerHTML = '<div class="empty-state">Select a job to receive truthful, job-specific CV recommendations. Orynta never invents experience.</div>';
     return;
   }
   box.innerHTML = '<p class="guidance-summary">' + safe(guidance.summary) + '</p><div class="guidance-list">' +
@@ -1675,7 +1675,7 @@ function openPasswordSetup(mode) {
   const invited = mode === "invite";
   document.getElementById("resetPasswordTitle").textContent = invited ? "Create your password" : "Choose a new password";
   document.getElementById("resetPasswordDescription").textContent = invited
-    ? "Your invitation has been accepted. Create a password to secure your Masari account and sign in again later."
+    ? "Your invitation has been accepted. Create a password to secure your Orynta account and sign in again later."
     : "Use at least ten characters with upper-case, lower-case, and number characters. Do not reuse a password.";
   document.getElementById("resetPasswordSubmit").textContent = invited ? "Create password and continue" : "Update password";
   document.getElementById("resetPasswordMessage").textContent = "";
@@ -1898,7 +1898,7 @@ async function exportAccount() {
   if (config.localPreview) {
     downloadJson({
       schema_version: "1.0",
-      product: "Masari",
+      product: "Orynta",
       exported_at: new Date().toISOString(),
       local_preview: true,
       workspace: state,
@@ -2008,7 +2008,7 @@ async function refreshAccountAccess() {
 async function confirmBillingActivation(attempt) {
   try {
     await refreshAccountAccess();
-    if (accountAccess.plan === "premium") { toast("Masari Premium is now active"); return; }
+    if (accountAccess.plan === "premium") { toast("Orynta Premium is now active"); return; }
   } catch (_error) {}
   if (attempt < 5) {
     window.setTimeout(function() { confirmBillingActivation(attempt + 1); }, 1500 * (attempt + 1));
@@ -2109,7 +2109,7 @@ document.getElementById("signupForm").addEventListener("submit", async function(
     return;
   }
   message.classList.add("is-success");
-  message.textContent = result.data.alreadyJoined ? "You are already on the Masari waitlist." : "You are on the list. We will contact you when access opens.";
+  message.textContent = result.data.alreadyJoined ? "You are already on the Orynta waitlist." : "You are on the list. We will contact you when access opens.";
   this.reset();
 });
 
@@ -2175,7 +2175,7 @@ document.getElementById("resetPasswordForm").addEventListener("submit", async fu
   closeModal("resetPasswordModal");
   this.reset();
   button.disabled = false;
-  toast(invited ? "Password created. Welcome to Masari." : "Your password has been updated");
+  toast(invited ? "Password created. Welcome to Orynta." : "Your password has been updated");
 });
 document.getElementById("onboardingSignoutButton").addEventListener("click", function() { cloud.auth.signOut({ scope: "local" }); });
 document.getElementById("betaConsentSignoutButton").addEventListener("click", function() { cloud.auth.signOut({ scope: "local" }); });
@@ -2694,7 +2694,7 @@ document.getElementById("feedbackForm").addEventListener("submit", async functio
 });
 
 document.getElementById("clearWorkspaceButton").addEventListener("click", async function() {
-  if (!window.confirm("Clear your CV, paths, jobs, and knowledge entries from Masari?")) return;
+  if (!window.confirm("Clear your CV, paths, jobs, and knowledge entries from Orynta?")) return;
   try {
     if (cloud && session) {
       const listing = await cloud.storage.from("private-cvs").list(session.user.id, { limit: 100 });
@@ -2780,7 +2780,7 @@ async function initializeCloud() {
     }
     showSurface("auth");
     const message = document.getElementById("authMessage");
-    message.textContent = "Masari is not configured yet. The administrator must add the Supabase project settings.";
+    message.textContent = "Orynta is not configured yet. The administrator must add the Supabase project settings.";
     document.querySelectorAll("#authGate input, #authGate button").forEach(function(element) { element.disabled = true; });
     return;
   }
@@ -2845,5 +2845,5 @@ async function initializeCloud() {
 
 initializeCloud().catch(function(error) {
   showSurface("auth");
-  document.getElementById("authMessage").textContent = error.message || "Masari could not connect. Please try again.";
+  document.getElementById("authMessage").textContent = error.message || "Orynta could not connect. Please try again.";
 });

@@ -13,11 +13,11 @@ async function loadSharedReport() {
   history.replaceState({}, "", window.location.pathname);
   const result = await reportClient.functions.invoke("shared-report", { body: { token: token } });
   if (result.error || !result.data?.report) {
-    reportRoot.innerHTML = '<div class="panel"><p class="eyebrow">Masari shared report</p><h1>Report unavailable</h1><p class="muted-copy">This link is invalid, expired, or has been revoked.</p></div>';
+    reportRoot.innerHTML = '<div class="panel"><p class="eyebrow">Orynta shared report</p><h1>Report unavailable</h1><p class="muted-copy">This link is invalid, expired, or has been revoked.</p></div>';
     return;
   }
   const report = result.data.report;
-  reportRoot.innerHTML = '<article class="public-report"><p class="eyebrow">Masari career progress report</p><h1>' +
+  reportRoot.innerHTML = '<article class="public-report"><p class="eyebrow">Orynta career progress report</p><h1>' +
     reportSafe(report.path.name) + '</h1><p class="report-target">' + reportSafe(report.path.target) +
     '</p><p class="muted-copy">' + reportSafe(report.analysis.summary) + '</p><h2>Cited findings</h2><div class="public-findings">' +
     (report.analysis.findings || []).map(function(item) {
