@@ -489,6 +489,15 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
 /* Orynta visual adjustments */
 .kanban-column{background:var(--canvas)}
 
+/* Dark navigation column */
+.sidebar,.sidebar-brand{background:#242323}
+.sidebar{border-right-color:#3A3838;color:#F7EFE8}
+.sidebar-brand{border-bottom-color:#3A3838}
+.sidebar-workspace span,.nav-group>p,.nav-item,.storage-status span:not(.status-dot),.legal-links a,.sidebar-bottom .text-button{color:#B9B0AA}
+.sidebar-workspace strong,.nav-item:hover,.nav-item.is-active,.storage-status strong{color:#F7EFE8}
+.nav-item:hover,.nav-item.is-active{background:#302E2E}
+.nav-item.is-active{border-color:#4A4543}
+
 /* Guided career workspace refinements */
 .sidebar{background:var(--canvas);border-right-color:var(--line)}
 .sidebar-brand{background:var(--canvas);border-bottom-color:var(--line)}
