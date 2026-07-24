@@ -180,6 +180,9 @@ if (!app.includes("renderApplicationCockpit") || !app.includes("data-application
 if (!app.includes("renderSetupChecklist") || !app.includes("data-empty-action")) {
   throw new Error("Guided checklist or actionable empty states are missing");
 }
+if (!app.includes('container.classList.toggle("hidden", isComplete)')) {
+  throw new Error("Completed guided checklist must be hidden");
+}
 for (const header of ["Content-Security-Policy", "Strict-Transport-Security", "X-Frame-Options"]) {
   if (!headers.includes(header)) throw new Error(`Required Cloudflare header is missing: ${header}`);
 }

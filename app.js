@@ -684,11 +684,11 @@ function renderSetupChecklist(path) {
   const steps = setupProgress(path);
   const complete = steps.filter(function(step) { return step.done; }).length;
   const container = document.getElementById("setupChecklist");
-  container.classList.toggle("is-complete", complete === steps.length);
+  const isComplete = complete === steps.length;
+  container.classList.toggle("hidden", isComplete);
+  if (isComplete) return;
   document.getElementById("setupChecklistProgress").textContent = complete + " of " + steps.length;
-  document.getElementById("setupChecklistSummary").textContent = complete === steps.length
-    ? "Your baseline is ready. Keep it current as your experience grows."
-    : "Share your CV, understand the gap, then move with a plan.";
+  document.getElementById("setupChecklistSummary").textContent = "Share your CV, understand the gap, then move with a plan.";
   document.getElementById("setupProgressBar").style.width = Math.round(complete / steps.length * 100) + "%";
   const list = document.getElementById("setupSteps");
   list.innerHTML = steps.map(function(step, index) {
