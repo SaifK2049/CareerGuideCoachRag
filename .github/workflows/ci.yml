@@ -1,4 +1,4 @@
-name: Masari checks
+name: Orynta checks
 
 on:
   pull_request:

@@ -66,7 +66,7 @@ Deno.serve(async (request) => {
         userId = billing?.user_id;
       }
       if (!userId && event.type !== "customer.subscription.deleted") {
-        throw new Error(`No Masari user is mapped to Stripe customer ${customerId}`);
+        throw new Error(`No Orynta user is mapped to Stripe customer ${customerId}`);
       }
       if (!userId) {
         const { error: markDeletedError } = await admin.from("stripe_events").update({

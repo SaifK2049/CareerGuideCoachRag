@@ -67,7 +67,7 @@ Deno.serve(async (request) => {
     }
     const page = await fetch(url, {
       redirect: "error",
-      headers: { "User-Agent": "Masari Job Import/1.0" },
+      headers: { "User-Agent": "Orynta Job Import/1.0" },
       signal: AbortSignal.timeout(15000),
     });
     if (!page.ok) return jsonResponse(request, { error: "The job page could not be retrieved. Paste the description instead." }, 422);

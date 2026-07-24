@@ -246,7 +246,7 @@ Deno.serve(async (request) => {
       headers: {
         ...headers,
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="masari-${dataset}-${range.from.slice(0, 10)}-${range.to.slice(0, 10)}.csv"`,
+        "Content-Disposition": `attachment; filename="orynta-${dataset}-${range.from.slice(0, 10)}-${range.to.slice(0, 10)}.csv"`,
         "Cache-Control": "no-store",
       },
     });

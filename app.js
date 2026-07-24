@@ -23,7 +23,7 @@ document.getElementById("feedbackButton").classList.toggle("hidden", config.feed
 let session = null;
 let cloudReady = false;
 const analyticsSessionId = (function() {
-  const key = "masari-analytics-session";
+  const key = "orynta-analytics-session";
   let value = sessionStorage.getItem(key);
   if (!value) { value = crypto.randomUUID(); sessionStorage.setItem(key, value); }
   return value;
@@ -400,12 +400,12 @@ function normalizeAnalysisRecord(record) {
 
 function setAnalysisStatus(pathId, status, message, requestId) {
   analysisUi[pathId] = { status: status, message: message, requestId: requestId || "", updatedAt: new Date().toISOString() };
-  try { sessionStorage.setItem("masari:analysis-status", JSON.stringify(analysisUi)); } catch (_error) {}
+  try { sessionStorage.setItem("orynta:analysis-status", JSON.stringify(analysisUi)); } catch (_error) {}
   renderAnalysisStatus(activePath());
 }
 
 function restoreAnalysisStatus() {
-  try { analysisUi = JSON.parse(sessionStorage.getItem("masari:analysis-status")) || {}; }
+  try { analysisUi = JSON.parse(sessionStorage.getItem("orynta:analysis-status")) || {}; }
   catch (_error) { analysisUi = {}; }
 }
 
@@ -1903,7 +1903,7 @@ async function exportAccount() {
       local_preview: true,
       workspace: state,
       rag_documents: ragDocuments()
-    }, "masari-account-export.json");
+    }, "orynta-account-export.json");
     toast("Preview account data exported");
     return;
   }
@@ -1914,7 +1914,7 @@ async function exportAccount() {
     await saveQueue;
     const result = await cloud.functions.invoke("export-account", { body: {} });
     if (result.error) throw result.error;
-    downloadJson(result.data, "masari-account-export.json");
+    downloadJson(result.data, "orynta-account-export.json");
     toast("Private account data exported");
   } catch (error) {
     toast(await functionErrorMessage(error, "Account export failed"));
@@ -2582,7 +2582,7 @@ function reportPayload() {
 }
 
 document.getElementById("downloadReportButton").addEventListener("click", function() {
-  downloadJson(reportPayload(), "masari-progress-report.json");
+  downloadJson(reportPayload(), "orynta-progress-report.json");
 });
 document.getElementById("printReportButton").addEventListener("click", function() { window.print(); });
 document.getElementById("createShareLinkButton").addEventListener("click", async function() {

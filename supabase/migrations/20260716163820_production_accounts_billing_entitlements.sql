@@ -355,7 +355,7 @@ create trigger enforce_knowledge_plan_limit
   before insert on public.knowledge_evidence
   for each row execute function private.enforce_resource_limit('knowledge_evidence');
 
-create or replace function private.handle_new_masari_user()
+create or replace function private.handle_new_orynta_user()
 returns trigger
 language plpgsql
 security definer
@@ -372,10 +372,10 @@ begin
 end;
 $$;
 
-drop trigger if exists on_auth_user_created_masari on auth.users;
-create trigger on_auth_user_created_masari
+drop trigger if exists on_auth_user_created_orynta on auth.users;
+create trigger on_auth_user_created_orynta
   after insert on auth.users
-  for each row execute function private.handle_new_masari_user();
+  for each row execute function private.handle_new_orynta_user();
 
 insert into public.career_profiles (user_id)
 select id from auth.users
@@ -390,4 +390,4 @@ grant usage, select on sequence public.audit_events_id_seq to authenticated, ser
 revoke all on function private.effective_plan(uuid) from public, anon, authenticated;
 revoke all on function private.feature_limit(uuid, text) from public, anon, authenticated;
 revoke all on function private.enforce_resource_limit() from public, anon, authenticated;
-revoke all on function private.handle_new_masari_user() from public, anon, authenticated;
+revoke all on function private.handle_new_orynta_user() from public, anon, authenticated;

@@ -1,6 +1,6 @@
-# Masari private-beta launch runbook
+# Orynta private-beta launch runbook
 
-Masari is configured for a free, invitation-only beta. Billing code remains dormant behind `billingEnabled: false`; do not add Stripe secrets or enable Premium buttons for this stage.
+Orynta is configured for a free, invitation-only beta. Billing code remains dormant behind `billingEnabled: false`; do not add Stripe secrets or enable Premium buttons for this stage.
 
 ## Implemented beta controls
 

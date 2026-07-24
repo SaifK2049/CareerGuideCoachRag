@@ -28,8 +28,8 @@ async function request(path, { token = anonKey, apiKey = anonKey, method = "GET"
 }
 
 async function createUser(label, appMetadata = {}) {
-  const email = `masari-${label}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
-  const password = "Masari-Test-Password-42!";
+  const email = `orynta-${label}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
+  const password = "Orynta-Test-Password-42!";
   let created;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     created = await request("/auth/v1/admin/users", {
@@ -170,7 +170,7 @@ try {
     assert.equal(adminPayload.includes(`"${forbidden}"`), false, `admin overview must not expose ${forbidden}`);
   }
 
-  const waitlistEmail = `masari-waitlist-${Date.now()}@example.com`;
+  const waitlistEmail = `orynta-waitlist-${Date.now()}@example.com`;
   const waitlistSignup = await serviceRest("waitlist_signups?select=id", {
     method: "POST",
     headers: { Prefer: "return=representation" },
@@ -846,7 +846,7 @@ try {
   });
   assert.equal(bobIndependentLimit.data[0].allowed, true);
 
-  const pdfBytes = new TextEncoder().encode("%PDF-1.4 Masari integration fixture");
+  const pdfBytes = new TextEncoder().encode("%PDF-1.4 Orynta integration fixture");
   const upload = await fetch(`${baseUrl}/storage/v1/object/private-cvs/${alice.id}/current-cv.pdf`, {
     method: "POST",
     headers: {

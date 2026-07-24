@@ -1,4 +1,4 @@
-const appUrl = (process.env.MONITOR_APP_URL || "https://masari-qujfb.ondigitalocean.app").replace(/\/$/, "");
+const appUrl = (process.env.MONITOR_APP_URL || "https://orynta-qujfb.ondigitalocean.app").replace(/\/$/, "");
 const supabaseUrl = (process.env.MONITOR_SUPABASE_URL || "https://fdievvhtyllgpdoedcai.supabase.co").replace(/\/$/, "");
 const timeoutMs = Number(process.env.MONITOR_TIMEOUT_MS || 15000);
 
@@ -22,7 +22,7 @@ async function checkedFetch(name, url, options = {}) {
 
 const homepage = await checkedFetch("homepage", appUrl);
 const homepageText = await homepage.text();
-if (!homepageText.includes("Masari")) throw new Error("Homepage content marker is missing");
+if (!homepageText.includes("Orynta")) throw new Error("Homepage content marker is missing");
 
 const appScript = await checkedFetch("application_script", `${appUrl}/app.js`);
 const appScriptText = await appScript.text();

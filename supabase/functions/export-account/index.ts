@@ -56,7 +56,7 @@ Deno.serve(async (request) => {
 
     return jsonResponse(request, {
       schema_version: "1.0",
-      product: "Masari",
+      product: "Orynta",
       exported_at: new Date().toISOString(),
       account: {
         id: userId,
@@ -87,7 +87,7 @@ Deno.serve(async (request) => {
       })),
       note: "The extracted CV text is included in profile.cv_text. Binary PDF files remain in private storage and are not embedded in this JSON export.",
     }, 200, {
-      "Content-Disposition": 'attachment; filename="masari-account-export.json"',
+      "Content-Disposition": 'attachment; filename="orynta-account-export.json"',
     });
   } catch (_error) {
     console.error("export-account failed");

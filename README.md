@@ -1,4 +1,4 @@
-# Masari
+# Orynta
 
 A private, multi-user career intelligence workspace configured for a free, invitation-only beta.
 
@@ -60,7 +60,7 @@ The migration enables row-level security on every exposed table. All policies bi
 
 ## Rate limiting
 
-Supabase Auth applies its own IP and endpoint limits to sign-in, sign-up, email, password-reset, verification and token-refresh requests. Masari adds an atomic PostgreSQL-backed limiter for authenticated Edge Functions:
+Supabase Auth applies its own IP and endpoint limits to sign-in, sign-up, email, password-reset, verification and token-refresh requests. Orynta adds an atomic PostgreSQL-backed limiter for authenticated Edge Functions:
 
 - AI analysis: 5 requests per 5 minutes per user, in addition to the monthly plan quota.
 - Interview practice generation: 4 requests per 10 minutes per user, with one free or 20 Premium rounds per month.
@@ -119,7 +119,7 @@ See [docs/PRIVATE_BETA_LAUNCH.md](docs/PRIVATE_BETA_LAUNCH.md) for the beta acce
 
 ## RAG handoff
 
-Use **Export account data** to download `masari-account-export.json`. It includes the profile, CV text, paths, jobs, evidence, saved analyses and citations, interview practice history and progress, audit events, feedback, and stored-file metadata. Original PDF bytes are not embedded in the JSON.
+Use **Export account data** to download `orynta-account-export.json`. It includes the profile, CV text, paths, jobs, evidence, saved analyses and citations, interview practice history and progress, audit events, feedback, and stored-file metadata. Original PDF bytes are not embedded in the JSON.
 
 The hosted analysis function embeds these chunks with `text-embedding-3-small`, persists them in private pgvector-backed storage, retrieves the most relevant chunks, and returns structured skill findings with source labels such as `D1` and `D4`.
 

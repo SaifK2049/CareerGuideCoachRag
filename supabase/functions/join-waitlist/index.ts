@@ -56,7 +56,7 @@ Deno.serve(async (request) => {
     return jsonResponse(request, {
       joined: true,
       alreadyJoined: result.error?.code === "23505",
-      message: "You are on the Masari waitlist.",
+      message: "You are on the Orynta waitlist.",
     });
   } catch (_error) {
     console.error("join-waitlist failed");

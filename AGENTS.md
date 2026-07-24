@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Masari is a static browser application with a Supabase backend. The main UI lives in `index.html`, `app.js`, and `styles.css`; shared-report behavior is split into `report.html` and `report.js`. Static images belong in `assets/`. Supabase Edge Functions are under `supabase/functions/<function-name>/index.ts`, with reusable server helpers in `supabase/functions/_shared/`. Database changes are timestamped SQL files in `supabase/migrations/`. Operational runbooks live in `docs/`, while build and verification utilities live in `scripts/`. Generated output is written to `dist/` and should not be edited directly.
+Orynta is a static browser application with a Supabase backend. The main UI lives in `index.html`, `app.js`, and `styles.css`; shared-report behavior is split into `report.html` and `report.js`. Static images belong in `assets/`. Supabase Edge Functions are under `supabase/functions/<function-name>/index.ts`, with reusable server helpers in `supabase/functions/_shared/`. Database changes are timestamped SQL files in `supabase/migrations/`. Operational runbooks live in `docs/`, while build and verification utilities live in `scripts/`. Generated output is written to `dist/` and should not be edited directly.
 
 ## Build, Test, and Development Commands
 

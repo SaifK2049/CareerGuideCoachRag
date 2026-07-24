@@ -53,7 +53,7 @@ Deno.serve(async (request) => {
       const customer = await stripe.customers.create({
         email: userData.user.email,
         metadata: { supabase_user_id: userId },
-      }, { idempotencyKey: `masari-customer-${userId}` });
+      }, { idempotencyKey: `orynta-customer-${userId}` });
       customerId = customer.id;
       const { error } = await admin.from("billing_customers").upsert({
         user_id: userId,
@@ -83,7 +83,7 @@ Deno.serve(async (request) => {
       cancel_url: `${appUrl.replace(/\/$/, "")}/?billing=canceled`,
       subscription_data: { metadata: { supabase_user_id: userId, plan_code: "premium" } },
       metadata: { supabase_user_id: userId, plan_code: "premium" },
-    }, { idempotencyKey: `masari-checkout-${userId}-${Math.floor(Date.now() / 300000)}` });
+    }, { idempotencyKey: `orynta-checkout-${userId}-${Math.floor(Date.now() / 300000)}` });
     return response(request, { url: checkout.url });
   } catch (_error) {
     console.error("create-checkout-session failed");

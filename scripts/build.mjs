@@ -49,4 +49,4 @@ await writeFile(
   })};\n`,
   "utf8",
 );
-console.log("Masari production bundle created in dist/");
+console.log("Orynta production bundle created in dist/");

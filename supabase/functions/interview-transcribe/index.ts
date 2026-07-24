@@ -54,7 +54,7 @@ Deno.serve(async (request) => {
     const { data: access, error: accessError } = await userClient.rpc("get_my_account_access");
     if (accessError) throw new TranscriptionError("ACCESS_UNAVAILABLE", 500, "Your plan could not be verified.");
     if (access?.plan !== "premium" || !access?.features?.interview_voice?.enabled) {
-      throw new TranscriptionError("PREMIUM_REQUIRED", 402, "Microphone practice is available with Masari Premium.");
+      throw new TranscriptionError("PREMIUM_REQUIRED", 402, "Microphone practice is available with Orynta Premium.");
     }
 
     const apiKey = Deno.env.get("OPENAI_API_KEY") || Deno.env.get("OPENAI_AI_KEY") || "";

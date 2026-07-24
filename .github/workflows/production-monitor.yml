@@ -23,6 +23,6 @@ jobs:
           node-version: 22
       - name: Check production website and analysis preflight
         env:
-          MONITOR_APP_URL: https://masari-qujfb.ondigitalocean.app
+          MONITOR_APP_URL: https://orynta-qujfb.ondigitalocean.app
           MONITOR_SUPABASE_URL: https://fdievvhtyllgpdoedcai.supabase.co
         run: node scripts/production-smoke.mjs

@@ -1,8 +1,8 @@
-# Masari Brand Guidelines
+# Orynta Brand Guidelines
 
 ## Brand idea
 
-Masari helps people understand where their experience can take them and what to do next.
+Orynta helps people understand where their experience can take them and what to do next.
 
 The product should feel like a calm, thoughtful career guide: specific, warm, editorial, and practical. It should not feel like a generic analytics dashboard or a noisy productivity tool.
 
@@ -30,7 +30,7 @@ The landing page establishes a warm editorial system:
 
 - Warm cream canvas
 - Near-black charcoal typography
-- Masari orange as the signature accent
+- Orynta orange as the signature accent
 - Off-white surfaces and restrained borders
 - Large, tightly set headings
 - Generous whitespace
@@ -45,31 +45,31 @@ Use semantic tokens instead of hard-coded colors.
 
 ```css
 :root {
-  --masari-cream: #fef7f0;
-  --masari-paper: #fffdfa;
-  --masari-peach: #f8e8dc;
-  --masari-orange: #df6b3f;
-  --masari-orange-dark: #bb4f2b;
-  --masari-charcoal: #292524;
-  --masari-ink: #171514;
-  --masari-muted: #746d68;
-  --masari-faint: #a49b94;
-  --masari-line: #ded6cf;
-  --masari-success: #367a58;
-  --masari-warning: #b8782d;
-  --masari-danger: #bd5148;
+  --orynta-cream: #fef7f0;
+  --orynta-paper: #fffdfa;
+  --orynta-peach: #f8e8dc;
+  --orynta-orange: #df6b3f;
+  --orynta-orange-dark: #bb4f2b;
+  --orynta-charcoal: #292524;
+  --orynta-ink: #171514;
+  --orynta-muted: #746d68;
+  --orynta-faint: #a49b94;
+  --orynta-line: #ded6cf;
+  --orynta-success: #367a58;
+  --orynta-warning: #b8782d;
+  --orynta-danger: #bd5148;
 }
 ```
 
 ### Color usage
 
-- `--masari-cream`: default page background
-- `--masari-paper`: cards, panels, forms, and modals
-- `--masari-peach`: subtle highlights and secondary surfaces
-- `--masari-orange`: primary actions, active emphasis, key scores, and branded visual moments
-- `--masari-charcoal`: main text and dark feature panels
-- `--masari-muted`: supporting copy
-- `--masari-line`: borders and dividers
+- `--orynta-cream`: default page background
+- `--orynta-paper`: cards, panels, forms, and modals
+- `--orynta-peach`: subtle highlights and secondary surfaces
+- `--orynta-orange`: primary actions, active emphasis, key scores, and branded visual moments
+- `--orynta-charcoal`: main text and dark feature panels
+- `--orynta-muted`: supporting copy
+- `--orynta-line`: borders and dividers
 - Success, warning, and danger colors: status communication only; never use them as competing brand accents
 
 Do not use blue as the default product accent. Reserve it for legacy compatibility or cases where a blue semantic state is specifically required.
@@ -157,12 +157,12 @@ Use plain labels and restrained line icons. Avoid decorative symbol glyphs that 
 
 ### Buttons
 
-Primary buttons use charcoal or Masari orange with white text. Use orange for the most important product action and charcoal for high-confidence secondary actions.
+Primary buttons use charcoal or Orynta orange with white text. Use orange for the most important product action and charcoal for high-confidence secondary actions.
 
 ```css
 .button-primary {
-  background: var(--masari-orange);
-  border: 1px solid var(--masari-orange);
+  background: var(--orynta-orange);
+  border: 1px solid var(--orynta-orange);
   color: #fff;
   border-radius: var(--radius-sm);
   min-height: 2.75rem;
@@ -172,8 +172,8 @@ Primary buttons use charcoal or Masari orange with white text. Use orange for th
 
 .button-secondary {
   background: transparent;
-  border: 1px solid var(--masari-charcoal);
-  color: var(--masari-charcoal);
+  border: 1px solid var(--orynta-charcoal);
+  color: var(--orynta-charcoal);
   border-radius: var(--radius-sm);
 }
 ```
@@ -200,7 +200,7 @@ Avoid vague labels such as “Submit”, “Manage”, or “Continue” when a 
 Every major workspace view should have one clear hero message:
 
 - What the user is trying to achieve
-- What Masari currently knows
+- What Orynta currently knows
 - What the user should do next
 
 The overview hero should visually echo the landing page’s orange career-analysis card, including a prominent role, score, strengths, gaps, and explanation.
@@ -219,7 +219,7 @@ Prefer “Evidence coverage: 78%” with a short explanation over a bare “78�
 
 ### Voice
 
-Masari sounds:
+Orynta sounds:
 
 - Clear
 - Warm
@@ -249,12 +249,12 @@ Empty states should be useful, human, and action-led.
 Structure:
 
 1. State what is missing
-2. Explain what Masari will provide
+2. Explain what Orynta will provide
 3. Give one primary action
 
 Example:
 
-> Your career picture starts with one target role. Add a role and Masari will compare it with your experience.
+> Your career picture starts with one target role. Add a role and Orynta will compare it with your experience.
 
 Button: `Add a target role`
 
@@ -289,7 +289,7 @@ Illustrations should be simple, geometric, and editorial. Avoid stock-photo aest
 
 ### Phase 1: foundation
 
-- Replace the current blue/gray base tokens with the Masari cream/orange/charcoal system
+- Replace the current blue/gray base tokens with the Orynta cream/orange/charcoal system
 - Align font family, heading scale, border radius, and button styles
 - Replace icon glyphs with consistent line icons
 
@@ -301,7 +301,7 @@ Illustrations should be simple, geometric, and editorial. Avoid stock-photo aest
 
 ### Phase 3: language and polish
 
-- Rewrite labels, empty states, and CTAs in the Masari voice
+- Rewrite labels, empty states, and CTAs in the Orynta voice
 - Reduce panel density and increase spacing
 - Apply the system to interview prep, applications, reports, and profile
 

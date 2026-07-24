@@ -423,7 +423,7 @@ grant execute on function public.admin_analytics_feedback(timestamptz, timestamp
 grant execute on function public.admin_analytics_system(timestamptz, timestamptz) to service_role;
 
 select cron.schedule(
-  'masari-prune-analytics',
+  'orynta-prune-analytics',
   '17 3 * * *',
   $$
     delete from public.product_events where created_at < now() - interval '13 months';

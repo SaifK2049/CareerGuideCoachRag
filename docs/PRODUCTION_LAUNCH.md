@@ -1,10 +1,10 @@
-# Masari production launch plan
+# Orynta production launch plan
 
-> This document is the later paid-launch plan. Masari is currently configured for a free, invitation-only beta with billing and public signup disabled. Use [PRIVATE_BETA_LAUNCH.md](PRIVATE_BETA_LAUNCH.md) for the current deployment and acceptance gate.
+> This document is the later paid-launch plan. Orynta is currently configured for a free, invitation-only beta with billing and public signup disabled. Use [PRIVATE_BETA_LAUNCH.md](PRIVATE_BETA_LAUNCH.md) for the current deployment and acceptance gate.
 
 ## Context
 
-Masari is a private, multi-user career intelligence application. Visitors must authenticate before seeing application data. New users complete a three-step setup, then receive an account-isolated dashboard for their CV, job paths, evidence, progress, and AI analysis.
+Orynta is a private, multi-user career intelligence application. Visitors must authenticate before seeing application data. New users complete a three-step setup, then receive an account-isolated dashboard for their CV, job paths, evidence, progress, and AI analysis.
 
 The production stack is:
 
@@ -64,7 +64,7 @@ All application code, database definitions and deployment packaging live in this
 ### 3. Stripe
 
 1. Complete Stripe business verification.
-2. Create a `Masari Premium` Product.
+2. Create a `Orynta Premium` Product.
 3. Create the recurring Price or Prices.
 4. Configure the Stripe customer portal:
    - customers may update payment methods;

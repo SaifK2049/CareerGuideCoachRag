@@ -1,6 +1,6 @@
 # Admin analytics operations
 
-The admin screen is served at `/admin`. It uses the normal Masari email/password session, but the `admin-analytics` Edge Function authorizes access from the current Supabase Auth user on every request.
+The admin screen is served at `/admin`. It uses the normal Orynta email/password session, but the `admin-analytics` Edge Function authorizes access from the current Supabase Auth user on every request.
 
 ## Grant access
 
@@ -16,9 +16,9 @@ Never place the secret/service-role key in browser code or `config.js`. Do not u
 
 ## Deployment order
 
-1. Apply the database migrations and confirm the `masari-prune-analytics` Cron job is active.
+1. Apply the database migrations and confirm the `orynta-prune-analytics` Cron job is active.
 2. Deploy the telemetry-enabled Edge Functions and `admin-analytics`.
-3. Configure `APP_URL` as the public Masari origin and add that origin to the Supabase Auth redirect allow list. Waitlist invitations use it for the account-setup redirect.
+3. Configure `APP_URL` as the public Orynta origin and add that origin to the Supabase Auth redirect allow list. Waitlist invitations use it for the account-setup redirect.
 4. Configure production SMTP and verify the Supabase Auth invite email template before sending live invitations.
 5. Deploy the static application bundle.
 6. Grant the first administrator role and verify `/admin` with both an admin and an ordinary account.

@@ -101,7 +101,7 @@ if (!adminFunction.includes('Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")') || admi
 for (const table of ["product_events", "operational_events"]) {
   if (!adminMigration.includes(`alter table public.${table} enable row level security`)) throw new Error(`${table} must enable RLS`);
 }
-if (!adminMigration.includes("masari-prune-analytics") || !adminMigration.includes("interval '13 months'")) {
+if (!adminMigration.includes("orynta-prune-analytics") || !adminMigration.includes("interval '13 months'")) {
   throw new Error("Analytics retention job is missing");
 }
 if (!adminMigration.includes("revoke all on function public.admin_analytics_overview") || !adminMigration.includes("to service_role")) {
@@ -280,7 +280,7 @@ if (!/enable_signup = false/.test(supabaseConfig)) {
 if (!app.includes("billingEnabled") || !app.includes("signupEnabled") || !app.includes("betaMode")) {
   throw new Error("Private-beta feature flags are missing from the browser application");
 }
-if (!app.includes('cloud.functions.invoke("join-waitlist"') || !html.includes("Join the Masari waitlist")) {
+if (!app.includes('cloud.functions.invoke("join-waitlist"') || !html.includes("Join the Orynta waitlist")) {
   throw new Error("Public waitlist signup flow is missing");
 }
 if (

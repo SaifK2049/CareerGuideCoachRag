@@ -81,7 +81,7 @@
 @media(max-width:900px){.interview-layout{grid-template-columns:1fr}.interview-scorebar{grid-template-columns:90px minmax(180px,1fr) 120px}}
 @media(max-width:600px){.interview-scorebar{grid-template-columns:1fr;gap:12px}.interview-stage{padding:18px}.interview-question h2{font-size:21px}.interview-answer-heading{display:grid}.interview-voice-controls{align-items:flex-start;justify-content:flex-start;flex-wrap:wrap}.interview-voice-controls span{text-align:left}.interview-assessment-columns{grid-template-columns:1fr}.interview-assessment-head{display:grid}.interview-stage .form-actions{display:grid;grid-template-columns:1fr 1fr}.interview-stage .form-actions #saveInterviewAnswerButton{grid-column:1/-1;grid-row:1}.interview-stage .form-actions #nextInterviewQuestion{margin-left:0}}
 
-/* Warm Masari interface */
+/* Warm Orynta interface */
 :root{
   --ink:#35251c;
   --muted:#756358;
@@ -405,7 +405,7 @@ h1{font-size:26px}h2{font-size:27px}h3{font-size:17px}
   .membership-plan-column+.membership-plan-column{border-left:0;border-top:1px solid var(--line)}
 }
 
-/* Masari authenticated editorial system */
+/* Orynta authenticated editorial system */
 :root{
   --canvas:#FEF7F0;--surface:#FFFDFA;--surface-2:#F8E8DC;
   --ink:#171514;--muted:#746D68;--faint:#A49B94;
