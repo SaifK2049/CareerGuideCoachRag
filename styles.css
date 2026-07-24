@@ -554,3 +554,41 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
 @media(max-width:760px){
   .sidebar{padding:0 14px 20px}.nav-group>p{display:block}.overview-hero{padding:22px}.hero-heading-row h2{font-size:29px}.hero-description{font-size:14px}.role-match-summary{gap:8px;margin-top:20px}.readiness-meter{margin:0 -22px -22px;padding:22px}.meter-label strong{font-size:40px}.next-action{display:grid;gap:14px}.next-action .button{width:100%}.setup-checklist{margin-bottom:20px}.setup-checklist-head{display:block}.setup-checklist-head>strong{display:block;margin-top:8px}.setup-steps{grid-template-columns:1fr}.setup-step{border-right:0;border-bottom:1px solid var(--line)}.setup-step:last-child{border-bottom:0}.stat-grid,.cockpit-stats{margin-bottom:20px}.content-grid{gap:20px}.analysis-panel,.next-panel,.jobs-panel,.path-detail-panel,.interview-stage,.interview-sidebar,.report-panel,.personal-profile-panel,.upload-panel,.membership-panel,.privacy-panel{padding:20px}.page-intro h2{font-size:30px}.cockpit-today-list{grid-template-columns:1fr}.application-kanban{padding-bottom:8px}
 }
+
+/* Orynta ivory sidebar */
+.sidebar,
+.sidebar-brand {
+  background: #EADBC9;
+}
+.sidebar {
+  border-right-color: #CDB9A7;
+  color: var(--ink);
+}
+.sidebar-brand,
+.storage-status,
+.nav-group-profile {
+  border-color: #CDB9A7;
+}
+.sidebar-workspace span,
+.sidebar-workspace strong,
+.nav-group > p,
+.nav-item,
+.nav-icon,
+.storage-status strong,
+.storage-status span:not(.status-dot),
+.sidebar-bottom .text-button,
+.legal-links a {
+  color: var(--ink);
+}
+.nav-item:hover {
+  background: #E1CEBA;
+  color: var(--ink);
+}
+.nav-item.is-active {
+  background: #F7EFE8;
+  border-color: #CDB9A7;
+  color: var(--ink);
+}
+.nav-item.is-active .nav-icon {
+  color: var(--accent-strong);
+}
