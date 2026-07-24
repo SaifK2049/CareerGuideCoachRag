@@ -5,6 +5,7 @@ const adminCloud = adminConfig.supabaseUrl && adminConfig.supabasePublishableKey
 let adminSession = null;
 let adminView = "overview";
 let userPage = 1;
+let waitlistPage = 1;
 let feedbackPage = 1;
 const pageSize = 25;
 
@@ -52,7 +53,7 @@ async function loadOverview() {
   document.getElementById("overviewMetrics").innerHTML = [
     metric("Total users", number(t.total_users)), metric("New users", number(t.new_users), percentChange(t.new_users, t.previous_new_users)),
     metric("Active users", number(t.active_users), percentChange(t.active_users, t.previous_active_users)), metric("Onboarded", number(t.onboarded_users)),
-    metric("Premium", number(t.premium_users)), metric("Feedback", number(t.feedback_items)),
+    metric("Premium", number(t.premium_users)), metric("Waitlist", number(t.waitlist_signups)), metric("Feedback", number(t.feedback_items)),
   ].join("");
   document.getElementById("trendGranularity").textContent = (data.range?.granularity || "day") + "ly";
   renderChart(data.trend || []);
@@ -88,6 +89,36 @@ async function loadFeedback(page) {
   pagination(document.getElementById("feedbackPagination"), feedbackPage, response.total, loadFeedback);
 }
 
+async function sendWaitlistInvite(button) {
+  const email = button.dataset.email || "this person";
+  if (!window.confirm(`Send a Masari account invitation to ${email}?`)) return;
+  button.disabled = true;
+  button.textContent = "Sending…";
+  try {
+    await invoke({ operation: "invite", signupId: button.dataset.inviteId });
+    await loadWaitlist(waitlistPage);
+    setMessage(`Invitation sent to ${email}.`);
+  } catch (error) {
+    setMessage(error.message, true);
+    try { await loadWaitlist(waitlistPage); } catch (_reloadError) {}
+  }
+}
+
+async function loadWaitlist(page) {
+  waitlistPage = page || 1;
+  const response = await invoke({ operation: "waitlist", page: waitlistPage, pageSize, search: document.getElementById("waitlistSearch").value, status: document.getElementById("waitlistStatus").value });
+  document.getElementById("waitlistCount").textContent = number(response.total) + " signups";
+  document.getElementById("waitlistRows").innerHTML = (response.items || []).map((item) => {
+    const canInvite = item.status === "pending" || item.status === "failed";
+    const action = canInvite
+      ? `<button class="invite-button" type="button" data-invite-id="${adminSafe(item.id)}" data-email="${adminSafe(item.email)}">${item.status === "failed" ? "Retry invite" : "Send invite"}</button>`
+      : `<span>${item.status === "joined" ? "Account active" : item.status === "invited" ? "Sent" : "Processing"}</span>`;
+    return `<tr><td><strong>${adminSafe(item.display_name || item.email)}</strong><span>${adminSafe(item.email)}</span></td><td>${date(item.created_at)}</td><td>${adminSafe(item.source)}</td><td>${adminSafe(item.status)}</td><td>${date(item.invited_at)}</td><td>${action}</td></tr>`;
+  }).join("") || '<tr><td colspan="6" class="empty">No waitlist signups match these filters.</td></tr>';
+  document.querySelectorAll("[data-invite-id]").forEach((button) => button.onclick = () => sendWaitlistInvite(button));
+  pagination(document.getElementById("waitlistPagination"), waitlistPage, response.total, loadWaitlist);
+}
+
 async function loadSystem() {
   const response = await invoke({ operation: "system" }); const data = response.data || {};
   const operations = data.operations || []; const success = operations.reduce((sum, item) => sum + Number(item.succeeded || 0), 0); const failed = operations.reduce((sum, item) => sum + Number(item.failed || 0), 0);
@@ -97,8 +128,8 @@ async function loadSystem() {
   document.getElementById("modelRows").innerHTML = (data.models || []).map((item) => compact(item.model, number(item.requests) + " requests · " + number(Number(item.input_tokens) + Number(item.output_tokens)) + " tokens")).join("") || '<p class="empty">No model usage.</p>';
 }
 
-async function loadCurrent() { setMessage("Loading…"); try { if (adminView === "overview") await loadOverview(); else if (adminView === "users") await loadUsers(userPage); else if (adminView === "feedback") await loadFeedback(feedbackPage); else await loadSystem(); setMessage(""); } catch (error) { setMessage(error.message, true); } }
-function setView(view) { adminView = view; document.querySelectorAll(".admin-view").forEach((section) => section.classList.toggle("is-visible", section.id === view + "View")); document.querySelectorAll("[data-admin-view]").forEach((button) => button.classList.toggle("is-active", button.dataset.adminView === view)); const labels = { overview: ["Overview", "Product adoption and account health"], users: ["Users", "Account activity and entitlements"], feedback: ["Feedback", "Private beta submissions"], system: ["System", "Workflow reliability and AI usage"] }; document.getElementById("adminTitle").textContent = labels[view][0]; document.getElementById("adminSubtitle").textContent = labels[view][1]; document.querySelector(".admin-sidebar").classList.remove("is-open"); loadCurrent(); }
+async function loadCurrent() { setMessage("Loading…"); try { if (adminView === "overview") await loadOverview(); else if (adminView === "users") await loadUsers(userPage); else if (adminView === "waitlist") await loadWaitlist(waitlistPage); else if (adminView === "feedback") await loadFeedback(feedbackPage); else await loadSystem(); setMessage(""); } catch (error) { setMessage(error.message, true); } }
+function setView(view) { adminView = view; document.querySelectorAll(".admin-view").forEach((section) => section.classList.toggle("is-visible", section.id === view + "View")); document.querySelectorAll("[data-admin-view]").forEach((button) => button.classList.toggle("is-active", button.dataset.adminView === view)); const labels = { overview: ["Overview", "Product adoption and account health"], users: ["Users", "Account activity and entitlements"], waitlist: ["Waitlist", "Early-access signups and invitations"], feedback: ["Feedback", "Private beta submissions"], system: ["System", "Workflow reliability and AI usage"] }; document.getElementById("adminTitle").textContent = labels[view][0]; document.getElementById("adminSubtitle").textContent = labels[view][1]; document.querySelector(".admin-sidebar").classList.remove("is-open"); loadCurrent(); }
 function showDenied() { document.getElementById("adminAuth").classList.add("hidden"); document.getElementById("adminShell").classList.add("hidden"); document.getElementById("adminDenied").classList.remove("hidden"); }
 async function signOut() { await adminCloud.auth.signOut(); location.reload(); }
 
@@ -107,6 +138,7 @@ document.querySelectorAll("[data-admin-view]").forEach((button) => button.onclic
 document.querySelectorAll("[data-days]").forEach((button) => button.onclick = () => { const days = Number(button.dataset.days); const to = new Date(); const from = new Date(to.getTime() - (days - 1) * 86400000); document.getElementById("rangeFrom").value = isoDate(from); document.getElementById("rangeTo").value = isoDate(to); document.querySelectorAll("[data-days]").forEach((item) => item.classList.toggle("is-active", item === button)); loadCurrent(); });
 document.getElementById("rangeForm").onsubmit = (event) => { event.preventDefault(); document.querySelectorAll("[data-days]").forEach((item) => item.classList.remove("is-active")); loadCurrent(); };
 document.getElementById("userFilters").onsubmit = (event) => { event.preventDefault(); loadUsers(1); };
+document.getElementById("waitlistFilters").onsubmit = (event) => { event.preventDefault(); loadWaitlist(1); };
 document.getElementById("feedbackFilters").onsubmit = (event) => { event.preventDefault(); loadFeedback(1); };
 document.querySelectorAll("[data-export]").forEach((button) => button.onclick = async () => { try { setMessage("Preparing export…"); const filters = button.dataset.export === "users" ? { search: document.getElementById("userSearch").value, plan: document.getElementById("userPlan").value, onboarding: document.getElementById("userOnboarding").value } : button.dataset.export === "feedback" ? { search: document.getElementById("feedbackSearch").value, category: document.getElementById("feedbackCategory").value } : {}; const data = await invoke({ operation: "export", dataset: button.dataset.export, ...filters }, true); const blob = data instanceof Blob ? data : new Blob([data], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `masari-${button.dataset.export}.csv`; link.click(); URL.revokeObjectURL(url); setMessage(""); } catch (error) { setMessage(error.message, true); } });
 document.getElementById("adminSignOut").onclick = signOut; document.getElementById("deniedSignOut").onclick = signOut;

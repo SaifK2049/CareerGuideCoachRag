@@ -39,6 +39,7 @@
         <nav aria-label="Admin analytics">
           <button class="is-active" data-admin-view="overview">Overview</button>
           <button data-admin-view="users">Users</button>
+          <button data-admin-view="waitlist">Waitlist</button>
           <button data-admin-view="feedback">Feedback</button>
           <button data-admin-view="system">System</button>
         </nav>
@@ -76,6 +77,11 @@
         <section class="admin-view" id="usersView">
           <form class="filter-bar" id="userFilters"><input id="userSearch" type="search" placeholder="Search email, name, or user ID" /><select id="userPlan"><option value="">All plans</option><option value="free">Free</option><option value="premium">Premium</option></select><select id="userOnboarding"><option value="">All onboarding states</option><option value="complete">Complete</option><option value="incomplete">Incomplete</option></select><button type="submit">Filter</button><button type="button" data-export="users">Export CSV</button></form>
           <section class="section"><div class="section-head"><h2>User directory</h2><span id="userCount"></span></div><div class="table-wrap"><table><thead><tr><th>User</th><th>Joined</th><th>Last active</th><th>Plan</th><th>Onboarding</th><th>Jobs</th><th>Analyses</th><th>Interviews</th></tr></thead><tbody id="userRows"></tbody></table></div><div class="pagination" id="userPagination"></div></section>
+        </section>
+
+        <section class="admin-view" id="waitlistView">
+          <form class="filter-bar" id="waitlistFilters"><input id="waitlistSearch" type="search" placeholder="Search email or name" /><select id="waitlistStatus"><option value="">All statuses</option><option value="pending">Pending</option><option value="sending">Sending</option><option value="invited">Invited</option><option value="joined">Joined</option><option value="failed">Failed</option></select><button type="submit">Filter</button></form>
+          <section class="section"><div class="section-head"><h2>Waitlist signups</h2><span id="waitlistCount"></span></div><div class="table-wrap"><table><thead><tr><th>Signup</th><th>Signed up</th><th>Source</th><th>Status</th><th>Invite sent</th><th>Action</th></tr></thead><tbody id="waitlistRows"></tbody></table></div><div class="pagination" id="waitlistPagination"></div></section>
         </section>
 
         <section class="admin-view" id="feedbackView">

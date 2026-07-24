@@ -38,6 +38,7 @@ const [
   adminScript,
   adminStyles,
   adminMigration,
+  adminWaitlistMigration,
   adminFunction,
   telemetryHelper,
   redirects,
@@ -78,16 +79,17 @@ const [
   readFile(resolve(root, "admin.js"), "utf8"),
   readFile(resolve(root, "admin.css"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260722130434_admin_analytics_telemetry.sql"), "utf8"),
+  readFile(resolve(root, "supabase/migrations/20260722152159_admin_waitlist_invites.sql"), "utf8"),
   readFile(resolve(root, "supabase/functions/admin-analytics/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/functions/_shared/telemetry.ts"), "utf8"),
   readFile(resolve(root, "_redirects"), "utf8"),
   readFile(resolve(root, "scripts/build.mjs"), "utf8"),
 ]);
 
-for (const surface of ["adminAuth", "adminDenied", "adminShell", "overviewView", "usersView", "feedbackView", "systemView"]) {
+for (const surface of ["adminAuth", "adminDenied", "adminShell", "overviewView", "usersView", "waitlistView", "feedbackView", "systemView"]) {
   if (!adminPage.includes(`id="${surface}"`)) throw new Error(`Admin surface is missing: ${surface}`);
 }
-for (const operation of ["overview", "users", "feedback", "system", "export"]) {
+for (const operation of ["overview", "users", "waitlist", "invite", "feedback", "system", "export"]) {
   if (!adminFunction.includes(`"${operation}"`)) throw new Error(`Admin analytics operation is missing: ${operation}`);
 }
 if (!adminFunction.includes('app_metadata?.role !== "admin"') || !adminFunction.includes("auth.getUser(token)")) {
@@ -105,6 +107,9 @@ if (!adminMigration.includes("masari-prune-analytics") || !adminMigration.includ
 if (!adminMigration.includes("revoke all on function public.admin_analytics_overview") || !adminMigration.includes("to service_role")) {
   throw new Error("Admin aggregate functions must be service-role-only");
 }
+if (!adminWaitlistMigration.includes("admin_claim_waitlist_invite") || !adminWaitlistMigration.includes("revoke all on function public.admin_analytics_waitlist") || !adminFunction.includes("inviteUserByEmail")) {
+  throw new Error("Admin waitlist invitations must be claimed atomically and sent only by the protected Edge Function");
+}
 if (!telemetryHelper.includes("operational_events") || !telemetryHelper.includes("try") || !app.includes("record_product_event")) {
   throw new Error("Fail-open product and operational telemetry is incomplete");
 }
@@ -117,6 +122,10 @@ if (!/\[functions\.admin-analytics\][\s\S]*?verify_jwt = true/.test(supabaseConf
 if (!adminStyles.includes(".table-wrap") || !adminScript.includes("renderChart")) {
   throw new Error("Admin responsive tables or data-driven chart are missing");
 }
+const adminIds = [...adminPage.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+const adminReferences = [...adminScript.matchAll(/getElementById\("([^"]+)"\)/g)].map((match) => match[1]);
+const missingAdminIds = [...new Set(adminReferences.filter((id) => !adminIds.includes(id)))];
+if (missingAdminIds.length) throw new Error(`Admin JavaScript references missing HTML ids: ${missingAdminIds.join(", ")}`);
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
 const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);

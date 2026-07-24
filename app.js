@@ -477,14 +477,14 @@ function renderAnalysisResult(path) {
       : !hasEvidence
         ? '<button type="button" class="button button-dark" data-empty-action="profile">Add CV or evidence</button>'
         : '<button type="button" class="button button-dark" data-empty-action="analysis">Run your first analysis</button>';
-    box.innerHTML = '<div class="empty-state empty-state-action"><strong>No assessment yet</strong><p>Add a target job and evidence, then Masari will compare them and return source-backed findings.</p>' + action + '</div>';
+    box.innerHTML = '<div class="empty-state empty-state-action"><strong>Your career picture starts here</strong><p>Add a target role and the evidence behind your experience. Masari will show what is already working and what to strengthen next.</p>' + action + '</div>';
     bindEmptyActions(box);
     return;
   }
   const sourceMap = Object.fromEntries((analysis.sources || []).map(function(source) {
     return [source.label, source];
   }));
-  box.innerHTML = '<div class="analysis-result"><div class="analysis-result-head"><strong>Private cited analysis</strong><span>' +
+  box.innerHTML = '<div class="analysis-result"><div class="analysis-result-head"><strong>Your career analysis</strong><span>' +
     safe(formatDate(analysis.completedAt || analysis.createdAt)) + '</span></div><p class="analysis-summary">' +
     safe(analysis.summary) + '</p><div class="analysis-findings">' +
     (analysis.findings || []).map(function(item, findingIndex) {
@@ -674,10 +674,9 @@ function setupProgress(path) {
     return item.pathId === path.id && item.status === "succeeded";
   }));
   return [
-    { label: "Complete your profile", detail: "Set your experience and career direction.", done: profileComplete, action: "profile", cta: "Open profile" },
-    { label: "Add your CV baseline", detail: "Upload a PDF or paste your current CV.", done: hasCv, action: "profile", cta: "Add CV" },
-    { label: "Add a target job", detail: "Paste a description for a role you want.", done: hasJob, action: "job", cta: "Add job" },
-    { label: "Run your first analysis", detail: "Compare your evidence with the target role.", done: hasAnalysis, action: "analysis", cta: "Run analysis" }
+    { label: "Share your CV", detail: "Add your experience and the direction you want next.", done: profileComplete && hasCv, action: "profile", cta: hasCv ? "Review CV" : "Add CV" },
+    { label: "Understand the gap", detail: "Add a target role so Masari can compare what matters.", done: hasJob, action: "job", cta: "Add a target role" },
+    { label: "Move with a plan", detail: "Run your analysis and choose the work that moves you forward.", done: hasAnalysis, action: "analysis", cta: "See my analysis" }
   ];
 }
 
@@ -689,7 +688,7 @@ function renderSetupChecklist(path) {
   document.getElementById("setupChecklistProgress").textContent = complete + " of " + steps.length;
   document.getElementById("setupChecklistSummary").textContent = complete === steps.length
     ? "Your baseline is ready. Keep it current as your experience grows."
-    : "Complete these steps to unlock a useful cited assessment.";
+    : "Share your CV, understand the gap, then move with a plan.";
   document.getElementById("setupProgressBar").style.width = Math.round(complete / steps.length * 100) + "%";
   const list = document.getElementById("setupSteps");
   list.innerHTML = steps.map(function(step, index) {
@@ -809,7 +808,9 @@ function render() {
     document.getElementById("activePathName").textContent = "Create a job path";
     document.getElementById("activePathDescription").textContent = "Add a target role, then collect job descriptions against it.";
     document.getElementById("activePathTarget").textContent = "No target selected";
-    document.getElementById("activePathJobCount").textContent = "0 jobs tracked";
+    document.getElementById("activePathJobCount").textContent = "0 target roles added";
+    document.getElementById("roleMatchStrengths").textContent = "Add your CV";
+    document.getElementById("roleMatchGaps").textContent = "Add a target role";
     document.getElementById("jobsStat").textContent = "0";
     document.getElementById("knowledgeStat").textContent = state.knowledge.length;
     document.getElementById("readinessScore").textContent = "0%";
@@ -820,8 +821,8 @@ function render() {
     renderAnalysisResult(null);
     renderJobs(document.getElementById("recentJobs"), []);
     document.getElementById("latestAnalysisStat").textContent = "Not run";
-    document.getElementById("pathList").innerHTML = '<div class="empty-state empty-state-action"><strong>No job paths yet</strong><p>Create a direction to start collecting target roles.</p><button type="button" class="button button-dark" data-empty-action="path">Create a job path</button></div>';
-    document.getElementById("pathJobs").innerHTML = '<div class="empty-state empty-state-action"><strong>No jobs yet</strong><p>Add a job description to measure recurring demand.</p><button type="button" class="button button-dark" data-empty-action="job">Add a job</button></div>';
+    document.getElementById("pathList").innerHTML = '<div class="empty-state empty-state-action"><strong>Start with the role you want next</strong><p>Masari will compare that direction with your experience and show what matters most.</p><button type="button" class="button button-dark" data-empty-action="path">Add a target role</button></div>';
+    document.getElementById("pathJobs").innerHTML = '<div class="empty-state empty-state-action"><strong>Add a role to understand the gap</strong><p>Paste a job description and Masari will identify recurring requirements.</p><button type="button" class="button button-dark" data-empty-action="job">Add a target role</button></div>';
     bindEmptyActions(document.getElementById("pathList"));
     bindEmptyActions(document.getElementById("pathJobs"));
     renderSetupChecklist(null);
@@ -841,6 +842,9 @@ function render() {
   document.getElementById("activePathDescription").textContent = path.description || "Build evidence toward this target role.";
   document.getElementById("activePathTarget").textContent = path.target;
   document.getElementById("activePathJobCount").textContent = path.jobs.length + (path.jobs.length === 1 ? " job tracked" : " jobs tracked");
+  const strongest = items.slice().sort(function(a, b) { return b.coverage - a.coverage; }).filter(function(item) { return item.coverage > 0; })[0];
+  document.getElementById("roleMatchStrengths").textContent = strongest ? strongest.skill : "Add evidence";
+  document.getElementById("roleMatchGaps").textContent = top ? top.skill : "Add a target role";
   document.getElementById("readinessScore").textContent = score + "%";
   document.getElementById("readinessBar").style.width = score + "%";
   document.getElementById("readinessNote").textContent = score >= 70 ? "Your evidence covers recurring requirements. Close the highest-value gaps below." : "Add your CV and knowledge evidence to establish a stronger baseline.";
@@ -849,7 +853,7 @@ function render() {
   const latestAnalysis = (state.analyses || []).find(function(item) { return item.pathId === path.id && item.status === "succeeded"; });
   document.getElementById("latestAnalysisStat").textContent = latestAnalysis ? formatDate(latestAnalysis.completedAt || latestAnalysis.createdAt) : "Not run";
   document.getElementById("topGapStat").textContent = top ? top.skill : "Add data";
-  document.getElementById("topGapFoot").textContent = top ? top.demand + " demand signal" + (top.demand === 1 ? "" : "s") : "from job demand";
+  document.getElementById("topGapFoot").textContent = top ? top.demand + " demand signal" + (top.demand === 1 ? "" : "s") : "from target-role demand";
   renderSkills(items);
   renderFocus(items);
   renderAnalysisResult(path);
@@ -863,19 +867,19 @@ function render() {
   renderInterviewPractice();
   renderSetupChecklist(path);
   renderNextAction(path);
-  document.getElementById("pageTitle").textContent = activeView === "overview" ? "Overview"
-    : activeView === "paths" ? "Job paths"
-    : activeView === "applications" ? "Application cockpit"
-    : activeView === "interview" ? "Interview practice"
-    : activeView === "knowledge" ? "Knowledge"
-    : activeView === "plan" ? "Action plan"
-    : activeView === "progress" ? "Progress & reports"
-    : "Profile & CV";
+  document.getElementById("pageTitle").textContent = activeView === "overview" ? "Your next move"
+    : activeView === "paths" ? "Role match"
+    : activeView === "applications" ? "Applications"
+    : activeView === "interview" ? "Interview prep"
+    : activeView === "knowledge" ? "Skill gaps"
+    : activeView === "plan" ? "Career plan"
+    : activeView === "progress" ? "Reports"
+    : "Your CV";
 }
 
 function renderSkills(items) {
   const box = document.getElementById("skillLandscape");
-  if (!items.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>No demand signals yet</strong><p>Add a job description to see which skills recur.</p><button type="button" class="button button-light" data-empty-action="job">Add a job</button></div>'; bindEmptyActions(box); return; }
+  if (!items.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>Add a target role to see what matters</strong><p>Masari will compare recurring role requirements with the evidence you have already built.</p><button type="button" class="button button-light" data-empty-action="job">Add a target role</button></div>'; bindEmptyActions(box); return; }
   box.innerHTML = items.slice(0, 8).map(function(item) {
     const kind = item.coverage >= 70 ? "good" : item.coverage >= 35 ? "warn" : "gap";
     const label = item.coverage >= 70 ? "Covered" : item.coverage >= 35 ? "Partial" : "Gap";
@@ -885,7 +889,7 @@ function renderSkills(items) {
 
 function renderFocus(items) {
   const box = document.getElementById("focusPlan");
-  if (!items.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>No priorities yet</strong><p>Add a job description and Masari will identify your highest-value gaps.</p><button type="button" class="button button-light" data-empty-action="job">Add a job</button></div>'; bindEmptyActions(box); return; }
+  if (!items.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>Your next step will appear here</strong><p>Add a target role and Masari will identify the work most likely to strengthen your position.</p><button type="button" class="button button-light" data-empty-action="job">Add a target role</button></div>'; bindEmptyActions(box); return; }
   box.innerHTML = items.slice(0, 3).map(function(item, index) {
     const cert = CERTS[item.skill];
     const action = item.coverage < 35 ? "Build evidence for " + item.skill + " before choosing a certification." : "Strengthen your " + item.skill + " evidence with one measurable project.";
@@ -895,7 +899,7 @@ function renderFocus(items) {
 }
 
 function renderJobs(box, jobs) {
-  if (!jobs.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>No job entries yet</strong><p>Add a description to start measuring employer demand.</p><button type="button" class="button button-light" data-empty-action="job">Add a job description</button></div>'; bindEmptyActions(box); return; }
+  if (!jobs.length) { box.innerHTML = '<div class="empty-state empty-state-action"><strong>No target roles added yet</strong><p>Add a job description to understand what employers are asking for.</p><button type="button" class="button button-light" data-empty-action="job">Add a target role</button></div>'; bindEmptyActions(box); return; }
   box.innerHTML = jobs.map(function(job) {
     return '<div class="job-row"><div class="job-title-wrap"><div class="job-title">' + safe(job.title) + '</div><span>' +
       safe(job.description.slice(0, 95)) + (job.description.length > 95 ? "…" : "") +
@@ -965,7 +969,7 @@ function renderApplicationCockpit() {
 
   const todayList = document.getElementById("applicationTodayList");
   if (!priorities.length) {
-    todayList.innerHTML = '<div class="empty-state"><strong>You are caught up</strong><p>Add a follow-up or interview date to keep the cockpit proactive.</p></div>';
+    todayList.innerHTML = '<div class="empty-state"><strong>You are caught up</strong><p>Add a follow-up or interview date to keep your next move visible.</p></div>';
   } else {
     todayList.innerHTML = priorities.slice(0, 8).map(function(item) {
       const record = item.record;
@@ -1410,7 +1414,7 @@ function renderInterviewPractice() {
   const stage = document.getElementById("interviewStage");
   const practice = sessions.find(function(item) { return item.id === selectedInterviewSessionId; });
   if (!practice) {
-    stage.innerHTML = '<div class="empty-state empty-state-action"><strong>No practice round selected</strong><p>Choose a saved job and generate a focused set of interview questions.</p></div>';
+    stage.innerHTML = '<div class="empty-state empty-state-action"><strong>Prepare for the interview you want</strong><p>Choose a target role and Masari will shape questions around your experience and the role requirements.</p></div>';
     return;
   }
   const questions = practice.questions || [];
@@ -1495,7 +1499,7 @@ function renderKnowledge() {
   document.getElementById("knowledgeCoverage").textContent = coverage + "%";
   document.getElementById("knowledgeCoverageBar").style.width = coverage + "%";
   document.getElementById("knowledgeCoverageText").textContent = state.knowledge.length ? state.knowledge.length + " evidence item" + (state.knowledge.length === 1 ? "" : "s") + " connected to your baseline." : "No knowledge entries yet.";
-  if (!state.knowledge.length) { list.innerHTML = '<div class="panel empty-state empty-state-action"><strong>No supporting evidence yet</strong><p>Add a skill you have practiced, studied, or delivered in a project.</p><button type="button" class="button button-dark" data-empty-action="knowledge">Add evidence</button></div>'; bindEmptyActions(list); return; }
+  if (!state.knowledge.length) { list.innerHTML = '<div class="panel empty-state empty-state-action"><strong>Show the proof behind your skills</strong><p>Add the work, study, or projects that make your experience credible.</p><button type="button" class="button button-dark" data-empty-action="knowledge">Add evidence</button></div>'; bindEmptyActions(list); return; }
   list.innerHTML = state.knowledge.map(function(item) {
     const dots = [1, 2, 3].map(function(level) { return '<i class="' + (level <= item.level ? "is-filled" : "") + '"></i>'; }).join("");
     return '<article class="knowledge-item"><div class="knowledge-item-top"><div><div class="skill-tag">' + safe(item.skill) + '</div><h3>' + safe(item.title) + '</h3></div><div class="confidence" aria-label="Confidence ' + item.level + ' of 3">' + dots + '</div></div><p>' + safe(item.evidence) + '</p><button class="text-button" data-edit-knowledge="' + item.id + '">Edit evidence <span>↗</span></button></article>';
@@ -1512,8 +1516,8 @@ function renderActionPlan(path) {
   const items = activePlanFilter === "all" ? allItems : allItems.filter(function(item) { return item.status === activePlanFilter; });
   if (!items.length) {
     list.innerHTML = '<div class="panel empty-state empty-state-action"><strong>' +
-      (allItems.length ? "No actions match this filter" : "Your action plan is empty") +
-      '</strong><p>Turn a cited finding into a concrete, trackable next step.</p><button class="button button-dark" data-empty-action="plan">Add an action</button></div>';
+      (allItems.length ? "No actions match this filter" : "Choose the work that moves you forward") +
+      '</strong><p>Turn one insight into a concrete next step you can complete and revisit.</p><button class="button button-dark" data-empty-action="plan">Choose a next step</button></div>';
     list.querySelector("[data-empty-action=plan]").addEventListener("click", function() { openPlanItemModal(); });
     return;
   }
@@ -2356,7 +2360,7 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
     setAnalysisStatus(path.id, "failed", message, requestId);
     toast(message);
     trackProductEvent("workflow_failed", "overview", "analysis", error);
-  } finally { button.disabled = false; button.textContent = "Run cited analysis"; }
+  } finally { button.disabled = false; button.textContent = "See my career analysis"; }
 });
 
 document.getElementById("pathForm").addEventListener("submit", function(event) {

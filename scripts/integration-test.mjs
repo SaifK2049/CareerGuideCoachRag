@@ -7,6 +7,7 @@ const baseUrl = status.API_URL;
 const anonKey = status.ANON_KEY;
 const serviceKey = status.SERVICE_ROLE_KEY;
 const createdUsers = [];
+const createdWaitlistSignups = [];
 
 async function request(path, { token = anonKey, apiKey = anonKey, method = "GET", body, headers = {} } = {}) {
   const response = await fetch(baseUrl + path, {
@@ -72,6 +73,9 @@ async function cleanup() {
       apiKey: serviceKey,
       method: "DELETE",
     });
+  }
+  for (const signupId of createdWaitlistSignups) {
+    await serviceRest(`waitlist_signups?id=eq.${signupId}`, { method: "DELETE" });
   }
 }
 
@@ -165,6 +169,44 @@ try {
   for (const forbidden of ["cv_text", "description", "answer_text", "findings", "contact_email", "stripe_customer_id"]) {
     assert.equal(adminPayload.includes(`"${forbidden}"`), false, `admin overview must not expose ${forbidden}`);
   }
+
+  const waitlistEmail = `masari-waitlist-${Date.now()}@example.com`;
+  const waitlistSignup = await serviceRest("waitlist_signups?select=id", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: { email: waitlistEmail, display_name: "Waitlist Person", source: "integration" },
+  });
+  assert.equal(waitlistSignup.response.status, 201, JSON.stringify(waitlistSignup.data));
+  const waitlistId = waitlistSignup.data[0].id;
+  createdWaitlistSignups.push(waitlistId);
+  const waitlistDirectory = await request("/functions/v1/admin-analytics", {
+    token: analyticsAdmin.token,
+    method: "POST",
+    body: { operation: "waitlist", search: waitlistEmail, from: new Date(Date.now() - 86400000).toISOString(), to: new Date(Date.now() + 86400000).toISOString() },
+  });
+  assert.equal(waitlistDirectory.response.status, 200, JSON.stringify(waitlistDirectory.data));
+  assert.equal(waitlistDirectory.data.items[0].status, "pending");
+  assert.equal("invited_user_id" in waitlistDirectory.data.items[0], false, "waitlist API must not expose Auth user IDs");
+  const nonAdminInvite = await request("/functions/v1/admin-analytics", {
+    token: alice.token,
+    method: "POST",
+    body: { operation: "invite", signupId: waitlistId },
+  });
+  assert.equal(nonAdminInvite.response.status, 403, JSON.stringify(nonAdminInvite.data));
+  const sentInvite = await request("/functions/v1/admin-analytics", {
+    token: analyticsAdmin.token,
+    method: "POST",
+    body: { operation: "invite", signupId: waitlistId },
+  });
+  assert.equal(sentInvite.response.status, 200, JSON.stringify(sentInvite.data));
+  assert.equal(sentInvite.data.invited, true);
+  createdUsers.push(sentInvite.data.user_id);
+  const duplicateInvite = await request("/functions/v1/admin-analytics", {
+    token: analyticsAdmin.token,
+    method: "POST",
+    body: { operation: "invite", signupId: waitlistId },
+  });
+  assert.equal(duplicateInvite.response.status, 409, JSON.stringify(duplicateInvite.data));
 
   const aliceProfile = await rest(`career_profiles?user_id=eq.${alice.id}&select=*`, alice);
   assert.equal(aliceProfile.response.status, 200, JSON.stringify(aliceProfile.data));

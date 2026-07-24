@@ -485,3 +485,60 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
 }
 @media(max-width:460px){.topbar-actions .button-dark span{display:none}.topbar-actions .button-dark{padding:0 12px}.stat-grid,.cockpit-stats{grid-template-columns:1fr}.stat-block{border-right:0!important;border-bottom:1px solid var(--line)}.stat-block:last-child{border-bottom:0}.section-heading>div:last-child{display:flex;flex-wrap:wrap;gap:8px}.page-intro h2{font-size:30px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
+
+/* Guided career workspace refinements */
+.sidebar{background:var(--canvas);border-right-color:var(--line)}
+.sidebar-brand{background:var(--canvas);border-bottom-color:var(--line)}
+.nav-item:hover{background:var(--surface)}
+.nav-item.is-active{background:var(--surface);border:1px solid var(--line);box-shadow:none}
+.nav-item.is-active::before{left:-9px}
+.nav-group-profile{border-top-color:var(--line)}
+.primary-nav{gap:18px;padding-top:3px}
+.nav-group{display:grid;gap:2px}
+.nav-group>p{margin:0 0 4px;padding:0 10px;color:var(--faint);font-size:11px;font-weight:600}
+.nav-group-profile{padding-top:2px;border-top:1px solid var(--line)}
+.nav-item{min-height:40px;border-radius:5px}
+.nav-item.is-active::before{left:-8px;top:8px;bottom:8px}
+
+.overview-hero{position:relative;overflow:hidden;grid-template-columns:minmax(0,1.4fr) minmax(292px,.8fr);margin-bottom:14px;padding:32px;background:var(--surface);border-color:var(--line-strong);box-shadow:inset 5px 0 0 var(--accent)}
+.overview-hero::after{display:none}
+.report-label{color:var(--accent-strong);font-weight:650}
+.hero-heading-row h2{font-size:34px;line-height:1.02}
+.hero-description{max-width:640px;font-size:16px;line-height:1.55}
+.hero-meta{margin-top:18px;color:var(--muted);font-size:11px}
+.role-match-summary{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:26px}
+.role-match-summary>div{padding-top:11px;border-top:1px solid var(--line)}
+.role-match-summary span{display:block;color:var(--muted);font-size:11px;margin-bottom:3px}
+.role-match-summary strong{display:block;font-size:14px;font-weight:650}
+.readiness-meter{position:relative;background:var(--surface-2);margin:-32px -32px -32px 0;padding:32px;min-height:100%;border-left:1px solid var(--line)}
+.readiness-meter::before{content:"Career analysis";display:block;margin-bottom:24px;color:var(--accent-strong);font-size:11px;font-weight:650}
+.meter-label{display:grid;gap:4px}.meter-label strong{font-size:46px;line-height:.9}.readiness-meter p{margin:16px 0 0;font-size:13px;line-height:1.5}.readiness-explainer{margin-top:8px;color:var(--accent-strong);text-align:left}
+
+.next-action{margin:0 0 26px;padding:20px 0;background:transparent;border:0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.next-action h3{font-size:22px}.next-action .button{background:var(--accent);border-color:var(--accent)}
+.setup-checklist{margin:0 0 24px;padding:0;background:transparent;border:0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.setup-checklist-head{padding:20px 0 12px}.setup-checklist-head h2{font-size:20px}.setup-checklist-head p:not(.eyebrow){font-size:13px}.setup-progress{height:4px;margin:4px 0 0}.setup-steps{grid-template-columns:repeat(3,1fr);gap:0}.setup-step{grid-template-columns:28px minmax(0,1fr);padding:16px 14px;border:0;border-radius:0;border-right:1px solid var(--line);background:transparent}.setup-step:last-child{border-right:0}.setup-step:hover{background:var(--surface-2)}.setup-step-cta{color:var(--accent-strong);font-size:11px}.setup-step-check{background:var(--accent-soft);color:var(--accent-strong)}.setup-step.is-done .setup-step-check{background:var(--green-soft);color:var(--green)}
+
+.stat-grid,.cockpit-stats{margin:0 0 26px}.stat-block{min-height:96px;padding:15px 18px}.stat-label{color:var(--muted);font-size:11px}.stat-block strong{font-size:22px}.stat-foot{font-size:11px}
+.content-grid{gap:24px;margin-bottom:24px}.panel{padding:0;background:transparent;border:0;border-radius:0}.analysis-panel,.next-panel,.jobs-panel,.path-detail-panel,.interview-stage,.interview-sidebar,.report-panel,.personal-profile-panel,.upload-panel,.membership-panel,.privacy-panel{padding:24px;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.section-heading{margin-bottom:18px}.section-heading h3{font-size:19px}.section-heading .eyebrow{color:var(--muted)}
+.jobs-panel{margin-bottom:32px}.job-row{padding:16px 0;border-color:var(--line)}.job-title{font-size:14px}.job-title-wrap span{font-size:12px}.job-status{border-radius:4px;background:var(--surface-2);color:var(--ink)}
+.path-card{border-radius:5px}.path-card.is-active{background:var(--surface-2);box-shadow:inset 3px 0 0 var(--accent)}.path-detail-panel{min-height:0}.knowledge-summary{padding:24px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px}.knowledge-item,.plan-item,.application-card{border-radius:6px}.knowledge-item{padding:18px}.knowledge-item .skill-tag{color:var(--accent-strong)}
+
+.cockpit-today{padding:22px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}.cockpit-priority{border-radius:5px;background:transparent}.cockpit-priority:hover{background:var(--surface-2)}.application-kanban{gap:14px}.kanban-column{padding:12px;background:var(--surface-2);border-radius:6px}.application-card{padding:14px;background:var(--surface);box-shadow:none}.application-next{border-left-color:var(--accent);background:var(--accent-soft)}
+
+.interview-scorebar{padding:18px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0;background:transparent}.interview-sidebar{position:sticky;top:92px}.interview-stage{min-height:520px}.interview-question h2{font-size:28px;line-height:1.12}.interview-question-progress button.is-current{background:var(--accent)}.interview-coaching{background:var(--surface-2);border-radius:6px}.interview-next-practice{background:var(--accent-soft)}
+
+.empty-state-action{padding:18px 0;gap:10px}.empty-state-action strong{font-family:"Geist",sans-serif;font-size:18px;letter-spacing:-.025em}.empty-state-action p{font-size:14px;line-height:1.55}.empty-state-action .button{margin-top:6px;background:var(--accent);border-color:var(--accent)}
+.report-panel{margin-top:24px}.public-report{border-radius:8px;background:var(--surface)}
+.page-intro{padding-bottom:18px}.page-intro .eyebrow{color:var(--accent-strong)}.page-intro h2{font-size:34px}.page-intro p:not(.eyebrow){font-size:14px}
+
+@media(max-width:1000px){
+  .primary-nav{gap:14px}.nav-group>p{display:none}.nav-group-profile{padding-top:8px}.overview-hero{grid-template-columns:1fr}.readiness-meter{margin:0 -32px -32px;padding:26px 32px;min-height:auto;border-left:0;border-top:1px solid var(--line)}.readiness-meter::before{margin-bottom:14px}.interview-sidebar{position:static}
+}
+@media(min-width:761px) and (max-width:1100px){
+  .nav-group>p{display:block}.paths-layout,.knowledge-layout,.profile-grid,.progress-grid,.interview-layout{grid-template-columns:1fr}.path-detail-panel{min-width:0}.path-detail-panel .job-row{grid-template-columns:minmax(0,1fr) 120px 94px 28px}.view{max-width:760px}
+}
+@media(max-width:760px){
+  .sidebar{padding:0 14px 20px}.nav-group>p{display:block}.overview-hero{padding:22px}.hero-heading-row h2{font-size:29px}.hero-description{font-size:14px}.role-match-summary{gap:8px;margin-top:20px}.readiness-meter{margin:0 -22px -22px;padding:22px}.meter-label strong{font-size:40px}.next-action{display:grid;gap:14px}.next-action .button{width:100%}.setup-checklist{margin-bottom:20px}.setup-checklist-head{display:block}.setup-checklist-head>strong{display:block;margin-top:8px}.setup-steps{grid-template-columns:1fr}.setup-step{border-right:0;border-bottom:1px solid var(--line)}.setup-step:last-child{border-bottom:0}.stat-grid,.cockpit-stats{margin-bottom:20px}.content-grid{gap:20px}.analysis-panel,.next-panel,.jobs-panel,.path-detail-panel,.interview-stage,.interview-sidebar,.report-panel,.personal-profile-panel,.upload-panel,.membership-panel,.privacy-panel{padding:20px}.page-intro h2{font-size:30px}.cockpit-today-list{grid-template-columns:1fr}.application-kanban{padding-bottom:8px}
+}

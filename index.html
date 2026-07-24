@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=brand-journey-4" />
   </head>
   <body>
     <section class="auth-gate" id="authGate">
@@ -96,14 +96,22 @@
         <div class="sidebar-brand"><img src="assets/masari-logo.png" alt="Masari" /></div>
         <div class="sidebar-workspace"><span>Career workspace</span><strong id="workspaceName">Your workspace</strong></div>
         <nav class="primary-nav" aria-label="Primary navigation">
-          <button class="nav-item is-active" data-view="overview"><span class="nav-icon" aria-hidden="true">⌂</span>Overview</button>
-          <button class="nav-item" data-view="profile"><span class="nav-icon" aria-hidden="true">▤</span>Your CV</button>
-          <button class="nav-item" data-view="paths"><span class="nav-icon" aria-hidden="true">↗</span>Role match</button>
-          <button class="nav-item" data-view="knowledge"><span class="nav-icon" aria-hidden="true">≡</span>Skill gaps</button>
-          <button class="nav-item" data-view="plan"><span class="nav-icon" aria-hidden="true">✓</span>Career plan</button>
-          <button class="nav-item" data-view="interview"><span class="nav-icon" aria-hidden="true">◇</span>Interview prep</button>
-          <button class="nav-item" data-view="applications"><span class="nav-icon" aria-hidden="true">▦</span>Applications</button>
-          <button class="nav-item" data-view="progress"><span class="nav-icon" aria-hidden="true">◫</span>Reports</button>
+          <div class="nav-group"><p>Understand</p>
+            <button class="nav-item is-active" data-view="overview"><span class="nav-icon" aria-hidden="true">⌂</span>Overview</button>
+            <button class="nav-item" data-view="paths"><span class="nav-icon" aria-hidden="true">↗</span>Role match</button>
+            <button class="nav-item" data-view="knowledge"><span class="nav-icon" aria-hidden="true">≡</span>Skill gaps</button>
+          </div>
+          <div class="nav-group"><p>Prepare</p>
+            <button class="nav-item" data-view="plan"><span class="nav-icon" aria-hidden="true">✓</span>Career plan</button>
+            <button class="nav-item" data-view="interview"><span class="nav-icon" aria-hidden="true">◇</span>Interview prep</button>
+          </div>
+          <div class="nav-group"><p>Track</p>
+            <button class="nav-item" data-view="applications"><span class="nav-icon" aria-hidden="true">▦</span>Applications</button>
+            <button class="nav-item" data-view="progress"><span class="nav-icon" aria-hidden="true">◫</span>Reports</button>
+          </div>
+          <div class="nav-group nav-group-profile"><p>Profile</p>
+            <button class="nav-item" data-view="profile"><span class="nav-icon" aria-hidden="true">▤</span>Your CV</button>
+          </div>
         </nav>
         <div class="sidebar-bottom">
           <div class="storage-status"><span class="status-dot"></span><div><strong>Private workspace</strong><span>Saved in this browser</span></div></div>
@@ -122,27 +130,27 @@
         <div id="toast" class="toast" role="status"></div>
 
         <section class="view is-visible" id="overviewView">
-          <section class="setup-checklist panel" id="setupChecklist" aria-labelledby="setupChecklistTitle">
-            <div class="setup-checklist-head">
-              <div><p class="eyebrow">Getting started</p><h2 id="setupChecklistTitle">Build your first career baseline</h2><p id="setupChecklistSummary">Complete these steps to unlock a cited assessment.</p></div>
-              <strong id="setupChecklistProgress">0 of 4</strong>
-            </div>
-            <div class="setup-progress" aria-hidden="true"><span id="setupProgressBar"></span></div>
-            <div class="setup-steps" id="setupSteps"></div>
-          </section>
           <div class="overview-hero" aria-labelledby="activePathName">
-            <div><p class="report-label">Current target role</p><div class="hero-heading-row"><h2 id="activePathName">Cloud Platform Engineering</h2><button class="icon-button" id="editPathButton" aria-label="Edit active path" title="Edit active path">✎</button></div><p class="hero-description" id="activePathDescription">Build evidence across the infrastructure, delivery, and reliability skills employers are asking for.</p><div class="hero-meta"><span id="activePathTarget">Senior Cloud / Platform Engineer</span><span>·</span><span id="activePathJobCount">0 jobs tracked</span></div></div>
+            <div><p class="report-label">Your role match</p><div class="hero-heading-row"><h2 id="activePathName">Cloud Platform Engineering</h2><button class="icon-button" id="editPathButton" aria-label="Edit active path" title="Edit active path">✎</button></div><p class="hero-description" id="activePathDescription">Build evidence across the infrastructure, delivery, and reliability skills employers are asking for.</p><div class="hero-meta"><span id="activePathTarget">Senior Cloud / Platform Engineer</span><span>·</span><span id="activePathJobCount">0 jobs tracked</span></div><div class="role-match-summary"><div><span>Strongest proof</span><strong id="roleMatchStrengths">Add evidence</strong></div><div><span>Biggest opportunity</span><strong id="roleMatchGaps">Add a target job</strong></div></div></div>
             <div class="readiness-meter"><div class="meter-label"><span>Your evidence coverage</span><strong id="readinessScore">0%</strong></div><div class="meter-track"><span id="readinessBar"></span></div><p id="readinessNote">Add your CV and a few knowledge entries to establish a baseline.</p><button type="button" class="readiness-explainer" id="readinessExplainer" aria-expanded="false" aria-controls="readinessDetails">How this measure is calculated</button><div class="readiness-details" id="readinessDetails"><p>This directional score compares recurring skills in your saved jobs with evidence in your CV and knowledge entries. It is not a hiring probability.</p></div></div>
           </div>
           <section class="next-action panel" id="nextActionPanel">
             <div><p class="eyebrow">Your next best action</p><h3 id="nextActionTitle">Add your first job description</h3><p id="nextActionDescription">Masari needs a target job to understand what employers are asking for.</p></div>
             <button type="button" class="button button-dark" id="nextActionButton">Add a job</button>
           </section>
+          <section class="setup-checklist" id="setupChecklist" aria-labelledby="setupChecklistTitle">
+            <div class="setup-checklist-head">
+              <div><p class="eyebrow">Your career baseline</p><h2 id="setupChecklistTitle">Three steps to a useful career analysis</h2><p id="setupChecklistSummary">Share your CV, understand the gap, then move with a plan.</p></div>
+              <strong id="setupChecklistProgress">0 of 4</strong>
+            </div>
+            <div class="setup-progress" aria-hidden="true"><span id="setupProgressBar"></span></div>
+            <div class="setup-steps" id="setupSteps"></div>
+          </section>
           <div class="stat-grid">
-            <article class="stat-block"><span class="stat-label">Job descriptions</span><strong id="jobsStat">0</strong><span class="stat-foot">in this path</span></article>
-            <article class="stat-block"><span class="stat-label">Knowledge signals</span><strong id="knowledgeStat">0</strong><span class="stat-foot">skills with evidence</span></article>
-            <article class="stat-block"><span class="stat-label">Top gap</span><strong id="topGapStat">Add data</strong><span class="stat-foot" id="topGapFoot">from job demand</span></article>
-            <article class="stat-block"><span class="stat-label">Latest assessment</span><strong id="latestAnalysisStat">Not run</strong><span class="stat-foot">saved privately</span></article>
+            <article class="stat-block"><span class="stat-label">Target roles explored</span><strong id="jobsStat">0</strong><span class="stat-foot">roles in this direction</span></article>
+            <article class="stat-block"><span class="stat-label">Skills supported</span><strong id="knowledgeStat">0</strong><span class="stat-foot">with evidence</span></article>
+            <article class="stat-block"><span class="stat-label">Biggest opportunity</span><strong id="topGapStat">Add data</strong><span class="stat-foot" id="topGapFoot">from target-role demand</span></article>
+            <article class="stat-block"><span class="stat-label">Last career check</span><strong id="latestAnalysisStat">Not run</strong><span class="stat-foot">saved privately</span></article>
           </div>
           <div class="content-grid">
           <section class="panel analysis-panel"><div class="section-heading"><div><p class="eyebrow">Career analysis</p><h3>Your current assessment</h3></div><div><button class="button button-dark" id="analyzeButton">See my career analysis</button> <button class="button button-light" data-view-target="knowledge">Add evidence <span>→</span></button></div></div><div id="analysisStatus" class="analysis-status hidden" role="status" aria-live="polite"></div><div id="ragResult"></div><details class="keyword-preview"><summary>View keyword signals</summary><div class="preview-heading"><p class="eyebrow">Keyword signals</p><span>This preview is directional; your career analysis is the authoritative view.</span></div><div id="skillLandscape" class="skill-list"></div></details></section>
@@ -152,12 +160,12 @@
         </section>
 
         <section class="view" id="pathsView">
-          <div class="page-intro"><div><p class="eyebrow">Target roles</p><h2>Job paths</h2><p>Keep separate evidence sets for different career directions.</p></div><button class="button button-dark" data-open-modal="pathModal"><span>＋</span> New path</button></div>
+          <div class="page-intro"><div><p class="eyebrow">Role match</p><h2>Career directions</h2><p>See how your experience maps to the roles you want next.</p></div><button class="button button-dark" data-open-modal="pathModal"><span>＋</span> Add a target role</button></div>
           <div class="paths-layout"><div id="pathList" class="path-list"></div><section class="panel path-detail-panel"><div class="section-heading"><div><p class="eyebrow">Selected path</p><h3 id="pathDetailName">Cloud Platform Engineering</h3></div><button class="button button-light" data-open-modal="jobModal">Add job <span>＋</span></button></div><p id="pathDetailDescription" class="muted-copy"></p><div class="path-detail-meta"><span id="pathDetailTarget"></span><span id="pathDetailCount"></span></div><div id="pathJobs" class="job-table path-jobs"></div></section></div>
         </section>
 
         <section class="view" id="applicationsView">
-          <div class="page-intro"><div><p class="eyebrow">Application cockpit</p><h2>Keep every opportunity moving</h2><p>See what needs attention today, manage your pipeline, and keep recruiter context close.</p></div><button class="button button-dark" data-open-modal="jobModal"><span>＋</span> Add opportunity</button></div>
+          <div class="page-intro"><div><p class="eyebrow">Applications</p><h2>Keep every opportunity moving</h2><p>Focus on the follow-ups and interviews that need your attention next.</p></div><button class="button button-dark" data-open-modal="jobModal"><span>＋</span> Add opportunity</button></div>
           <div class="cockpit-stats">
             <article class="stat-block"><span class="stat-label">Active applications</span><strong id="applicationActiveStat">0</strong><span class="stat-foot">saved through interviews</span></article>
             <article class="stat-block"><span class="stat-label">Needs attention</span><strong id="applicationDueStat">0</strong><span class="stat-foot">due or overdue</span></article>
@@ -200,19 +208,19 @@
         </section>
 
         <section class="view" id="knowledgeView">
-          <div class="page-intro"><div><p class="eyebrow">Your evidence graph</p><h2>Knowledge</h2><p>Add what you know, how you know it, and where the evidence came from.</p></div><button class="button button-dark" data-open-modal="knowledgeModal"><span>＋</span> Add knowledge</button></div>
+          <div class="page-intro"><div><p class="eyebrow">Skill gaps</p><h2>Your evidence</h2><p>Add the work, study, and projects that make your skills credible.</p></div><button class="button button-dark" data-open-modal="knowledgeModal"><span>＋</span> Add evidence</button></div>
           <section class="knowledge-layout"><div class="panel knowledge-summary"><p class="eyebrow">Evidence coverage</p><strong id="knowledgeCoverage">0%</strong><p id="knowledgeCoverageText">No knowledge entries yet.</p><div class="meter-track"><span id="knowledgeCoverageBar"></span></div></div><div id="knowledgeList" class="knowledge-list"></div></section>
         </section>
 
         <section class="view" id="planView">
-          <div class="page-intro"><div><p class="eyebrow">Turn insight into progress</p><h2>Action plan</h2><p>Track the work that closes your highest-value evidence gaps.</p></div><button class="button button-dark" id="addPlanItemButton"><span>＋</span> Add action</button></div>
+          <div class="page-intro"><div><p class="eyebrow">Career plan</p><h2>Turn insight into progress</h2><p>Choose the work that closes your most valuable evidence gaps.</p></div><button class="button button-dark" id="addPlanItemButton"><span>＋</span> Choose a next step</button></div>
           <div class="plan-toolbar"><div class="filter-pills" id="planFilters"><button class="filter-pill is-active" data-plan-filter="all">All</button><button class="filter-pill" data-plan-filter="not_started">Not started</button><button class="filter-pill" data-plan-filter="in_progress">In progress</button><button class="filter-pill" data-plan-filter="completed">Completed</button></div><span id="planProgressLabel">0 of 0 complete</span></div>
           <div class="plan-progress meter-track"><span id="planProgressBar"></span></div>
           <div id="actionPlanList" class="action-plan-list"></div>
         </section>
 
         <section class="view" id="progressView">
-          <div class="page-intro"><div><p class="eyebrow">Changes over time</p><h2>Progress &amp; reports</h2><p>Compare assessments, improve your CV, and share a privacy-safe report.</p></div><button class="button button-light" id="printReportButton">Print report</button></div>
+          <div class="page-intro"><div><p class="eyebrow">Reports</p><h2>See how far you’ve come</h2><p>Compare your career checks, improve your CV, and share progress safely.</p></div><button class="button button-light" id="printReportButton">Print report</button></div>
           <div class="progress-grid">
             <section class="panel"><div class="section-heading"><div><p class="eyebrow">Analysis history</p><h3>What changed?</h3></div><span id="historyCount">0 assessments</span></div><div id="analysisComparison"></div><div id="analysisHistory" class="analysis-history"></div></section>
             <section class="panel"><div class="section-heading"><div><p class="eyebrow">Job-specific guidance</p><h3>Strengthen your CV</h3></div></div><label class="field-label" for="guidanceJobSelect">Target job</label><select class="input" id="guidanceJobSelect"></select><button class="button button-dark button-full" id="generateCvGuidanceButton">Generate truthful guidance</button><div id="cvGuidanceResult" class="cv-guidance-result"></div></section>
@@ -251,7 +259,7 @@
     <script src="config.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.6/dist/umd/supabase.min.js" integrity="sha384-GyhLKJoRcMXYwIJUTyx0/uSPYliVPdRYYXJm3G6zyMjKShNs8jLM7WaLpk8Vr4W/" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e" crossorigin="anonymous"></script>
-    <script src="app.js"></script>
+    <script src="app.js?v=brand-journey"></script>
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&amp;onload=onTurnstileLoad" async defer></script>
   </body>
 </html>

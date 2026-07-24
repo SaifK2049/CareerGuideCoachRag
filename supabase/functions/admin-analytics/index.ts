@@ -2,7 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.110.6";
 import { handleCors, jsonResponse } from "../_shared/http.ts";
 import { consumeRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
 
-type Operation = "overview" | "users" | "feedback" | "system" | "export";
+type Operation = "overview" | "users" | "waitlist" | "invite" | "feedback" | "system" | "export";
 type ExportDataset = "users" | "feedback" | "feature_usage" | "operational_health";
 
 type RequestBody = {
@@ -14,7 +14,9 @@ type RequestBody = {
   search?: string;
   plan?: string;
   onboarding?: string;
+  status?: string;
   category?: string;
+  signupId?: string;
   dataset?: ExportDataset;
 };
 
@@ -30,6 +32,12 @@ function dateRange(body: RequestBody): { from: string; to: string } {
 
 function safeText(value: unknown, maximum = 200): string {
   return String(value || "").trim().slice(0, maximum);
+}
+
+function inviteRedirectUrl(): string | undefined {
+  const configured = (Deno.env.get("APP_URL") || "").split(",")[0].trim().replace(/\/$/, "");
+  if (!configured || !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(configured)) return undefined;
+  return configured + "/";
 }
 
 function csvCell(value: unknown): string {
@@ -100,10 +108,59 @@ Deno.serve(async (request) => {
 
     const body = await request.json() as RequestBody;
     const operation = body.operation || "overview";
-    const allowed: Operation[] = ["overview", "users", "feedback", "system", "export"];
+    const allowed: Operation[] = ["overview", "users", "waitlist", "invite", "feedback", "system", "export"];
     if (!allowed.includes(operation)) {
       return jsonResponse(request, { error: "Unknown analytics operation", code: "INVALID_OPERATION" }, 400);
     }
+    if (operation === "invite") {
+      const signupId = safeText(body.signupId, 36);
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(signupId)) {
+        return jsonResponse(request, { error: "Choose a valid waitlist signup", code: "INVALID_SIGNUP" }, 400);
+      }
+      const inviteRateLimit = await consumeRateLimit(admin, userData.user.id, "admin-waitlist-invite", 10, 60);
+      if (!inviteRateLimit.allowed) {
+        return rateLimitResponse(inviteRateLimit, Object.fromEntries(jsonResponse(request, {}).headers.entries()));
+      }
+      const claim = await admin.rpc("admin_claim_waitlist_invite", { p_id: signupId });
+      if (claim.error) throw claim.error;
+      const signup = Array.isArray(claim.data) ? claim.data[0] : null;
+      if (!signup) {
+        return jsonResponse(request, { error: "This signup is already invited, joined, or being processed", code: "INVITE_UNAVAILABLE" }, 409);
+      }
+
+      const redirectTo = inviteRedirectUrl();
+      const result = await admin.auth.admin.inviteUserByEmail(
+        signup.email,
+        redirectTo ? { redirectTo } : undefined,
+      );
+      if (result.error || !result.data.user) {
+        const message = String(result.error?.message || "").toLowerCase();
+        const errorCode = result.error?.status === 429
+          ? "INVITE_RATE_LIMITED"
+          : message.includes("already") || message.includes("registered")
+          ? "USER_EXISTS"
+          : "INVITE_FAILED";
+        await admin.rpc("admin_complete_waitlist_invite", {
+          p_id: signupId,
+          p_user_id: null,
+          p_error_code: errorCode,
+        });
+        const responseMessage = errorCode === "INVITE_RATE_LIMITED"
+          ? "Supabase has temporarily limited invitation emails. Try again later."
+          : errorCode === "USER_EXISTS"
+          ? "An account already exists for this email address."
+          : "The invitation email could not be sent.";
+        return jsonResponse(request, { error: responseMessage, code: errorCode }, errorCode === "INVITE_RATE_LIMITED" ? 429 : 409);
+      }
+      const completed = await admin.rpc("admin_complete_waitlist_invite", {
+        p_id: signupId,
+        p_user_id: result.data.user.id,
+        p_error_code: null,
+      });
+      if (completed.error || completed.data !== true) throw completed.error || new Error("INVITE_SAVE_FAILED");
+      return jsonResponse(request, { invited: true, signup_id: signupId, user_id: result.data.user.id });
+    }
+
     const range = dateRange(body);
 
     if (operation === "overview" || operation === "system") {
@@ -113,7 +170,7 @@ Deno.serve(async (request) => {
       return jsonResponse(request, { data });
     }
 
-    if (operation === "users" || operation === "feedback") {
+    if (operation === "users" || operation === "feedback" || operation === "waitlist") {
       const page = Math.max(1, Math.floor(Number(body.page) || 1));
       const pageSize = Math.min(100, Math.max(10, Math.floor(Number(body.pageSize) || 25)));
       const common = {
@@ -125,7 +182,9 @@ Deno.serve(async (request) => {
       };
       const parameters = operation === "users"
         ? { ...common, p_plan: safeText(body.plan, 20), p_onboarding: safeText(body.onboarding, 20) }
-        : { ...common, p_category: safeText(body.category, 20) };
+        : operation === "feedback"
+        ? { ...common, p_category: safeText(body.category, 20) }
+        : { ...common, p_status: safeText(body.status, 20) };
       const { data, error } = await admin.rpc(`admin_analytics_${operation}`, parameters);
       if (error) throw error;
       const items = Array.isArray(data) ? data : [];
