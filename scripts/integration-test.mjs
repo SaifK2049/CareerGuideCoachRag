@@ -28,7 +28,8 @@ async function request(path, { token = anonKey, apiKey = anonKey, method = "GET"
 }
 
 async function createUser(label, appMetadata = {}) {
-  const email = `orynta-${label}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
+  const emailLabel = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const email = `orynta-${emailLabel}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
   const password = "Orynta-Test-Password-42!";
   let created;
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -224,10 +225,14 @@ try {
       cv_text: "Alice private CV evidence",
       beta_terms_accepted_at: new Date().toISOString(),
       privacy_notice_version: "2026-07-16",
+      reminder_settings: { closing_days: 7, follow_up_days: 0, interview_hours: 24, include_plan_items: true },
+      dismissed_reminders: { "closing:test": "dismissed" },
     },
   });
   assert.equal(onboardingUpdate.response.status, 200, JSON.stringify(onboardingUpdate.data));
   assert.equal(onboardingUpdate.data[0].privacy_notice_version, "2026-07-16");
+  assert.equal(onboardingUpdate.data[0].reminder_settings.closing_days, 7);
+  assert.equal(onboardingUpdate.data[0].dismissed_reminders["closing:test"], "dismissed");
 
   const bobCannotReadAliceProfile = await rest(`career_profiles?user_id=eq.${alice.id}&select=*`, bob);
   assert.equal(bobCannotReadAliceProfile.response.status, 200);
@@ -300,14 +305,24 @@ try {
         interview_at: index === 1 ? new Date(Date.now() + 86400000).toISOString() : null,
         contact_name: index === 1 ? "Recruiter One" : "",
         contact_email: index === 1 ? "recruiter@example.com" : "",
+        source_provider: index === 1 ? "greenhouse.io" : "",
+        external_job_id: index === 1 ? "greenhouse-role-1" : "",
+        employment_type: index === 1 ? "Full-time" : "",
+        work_arrangement: index === 1 ? "Hybrid" : "",
+        salary_text: index === 1 ? "€70,000–€85,000" : "",
+        normalized_source_url: index === 1 ? "https://boards.greenhouse.io/example/jobs/1" : "",
+        import_metadata: index === 1 ? { method: "json_ld_and_page" } : {},
       },
     });
     assert.equal(job.response.status, 201, JSON.stringify(job.data));
   }
-  const cockpitJob = await rest(`job_descriptions?id=eq.${firstJobId}&select=next_action,follow_up_date,interview_at,contact_name,contact_email`, alice);
+  const cockpitJob = await rest(`job_descriptions?id=eq.${firstJobId}&select=next_action,follow_up_date,interview_at,contact_name,contact_email,source_provider,external_job_id,employment_type,work_arrangement,salary_text,normalized_source_url,import_metadata`, alice);
   assert.equal(cockpitJob.response.status, 200, JSON.stringify(cockpitJob.data));
   assert.equal(cockpitJob.data[0].next_action, "Follow up with the recruiter");
   assert.equal(cockpitJob.data[0].contact_email, "recruiter@example.com");
+  assert.equal(cockpitJob.data[0].source_provider, "greenhouse.io");
+  assert.equal(cockpitJob.data[0].work_arrangement, "Hybrid");
+  assert.equal(cockpitJob.data[0].import_metadata.method, "json_ld_and_page");
   const bobCannotReadCockpit = await rest(`job_descriptions?id=eq.${firstJobId}&select=next_action,contact_email`, bob);
   assert.deepEqual(bobCannotReadCockpit.data, [], "application cockpit details must remain owner-only");
   const twentyFirstJob = await rest("job_descriptions", alice, {
@@ -716,7 +731,11 @@ try {
       evidence_id: firstEvidenceId,
     },
   });
-  assert.equal(bobCannotLinkAliceEvidence.response.status, 403);
+  assert.equal(
+    [403, 409].includes(bobCannotLinkAliceEvidence.response.status),
+    true,
+    "cross-tenant evidence links must be rejected before or during constraint validation",
+  );
 
   const directCvGuidanceInsert = await rest("cv_guidance", alice, {
     method: "POST",

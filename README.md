@@ -2,13 +2,15 @@
 
 A private, multi-user career intelligence workspace configured for a free, invitation-only beta.
 
-- uploading a CV as a PDF and extracting its text in the browser;
+- uploading a text or scanned CV as a PDF, extracting it in the browser, and reviewing OCR text before saving;
 - creating separate target job paths;
 - collecting job descriptions as entries;
 - adding explicit knowledge evidence;
 - measuring recurring job-skill demand against CV and knowledge evidence;
 - running saved, cited RAG analysis with idempotent quota handling;
 - generating job-specific interview rounds with six-answer feedback, Premium voice transcription, answer coaching, XP, streaks, and achievements;
+- reviewing structured job imports, detecting likely duplicates, and tracking published job metadata;
+- receiving private in-app reminders for closing dates, follow-ups, interviews, and action-plan deadlines;
 - exporting a portable JSON copy of the account;
 - submitting privacy-safe beta feedback.
 

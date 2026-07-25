@@ -125,7 +125,13 @@ const CERTS = {
 };
 
 const demoState = {
-  profile: { displayName: "Demo user", careerGoal: "Explore Orynta", experienceLevel: "mid", country: "", onboardingComplete: true, betaTermsAcceptedAt: "2026-07-16T00:00:00.000Z", privacyNoticeVersion: PRIVACY_NOTICE_VERSION },
+  profile: {
+    displayName: "Demo user", careerGoal: "Explore Orynta", experienceLevel: "mid", country: "",
+    onboardingComplete: true, betaTermsAcceptedAt: "2026-07-16T00:00:00.000Z",
+    privacyNoticeVersion: PRIVACY_NOTICE_VERSION,
+    reminderSettings: { closing_days: 3, follow_up_days: 0, interview_hours: 24, include_plan_items: true },
+    dismissedReminders: {}
+  },
   activePathId: "path-cloud",
   cv: { fileName: "", text: "", uploadedAt: "" },
   paths: [{
@@ -173,6 +179,8 @@ let interviewRecordingChunks = [];
 let interviewRecordingStartedAt = 0;
 let interviewRecordingTimer = null;
 let interviewVoiceBusy = false;
+let pendingCvUpload = null;
+let pendingDuplicate = null;
 
 function loadState() {
   if (!config.localPreview) return emptyState();
@@ -182,6 +190,9 @@ function loadState() {
     loaded.interviewSessions = loaded.interviewSessions || [];
     loaded.interviewAnswers = loaded.interviewAnswers || [];
     loaded.interviewGameProfile = loaded.interviewGameProfile || { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] };
+    loaded.profile = loaded.profile || {};
+    loaded.profile.reminderSettings = loaded.profile.reminderSettings || { closing_days: 3, follow_up_days: 0, interview_hours: 24, include_plan_items: true };
+    loaded.profile.dismissedReminders = loaded.profile.dismissedReminders || {};
     return loaded;
   }
   catch (error) { return structuredClone(demoState); }
@@ -206,7 +217,12 @@ function saveState() {
 
 function emptyState() {
   return {
-    profile: { displayName: "", careerGoal: "", experienceLevel: "", country: "", onboardingComplete: false, betaTermsAcceptedAt: "", privacyNoticeVersion: "" },
+    profile: {
+      displayName: "", careerGoal: "", experienceLevel: "", country: "", onboardingComplete: false,
+      betaTermsAcceptedAt: "", privacyNoticeVersion: "",
+      reminderSettings: { closing_days: 3, follow_up_days: 0, interview_hours: 24, include_plan_items: true },
+      dismissedReminders: {}
+    },
     activePathId: "",
     cv: { fileName: "", text: "", uploadedAt: "" },
     paths: [],
@@ -254,6 +270,10 @@ async function loadCloudState() {
           nextAction: job.next_action || "", followUpDate: job.follow_up_date || "",
           interviewAt: job.interview_at || "", contactName: job.contact_name || "",
           contactEmail: job.contact_email || "",
+          sourceProvider: job.source_provider || "", externalJobId: job.external_job_id || "",
+          employmentType: job.employment_type || "", workArrangement: job.work_arrangement || "",
+          salaryText: job.salary_text || "", importMetadata: job.import_metadata || {},
+          normalizedSourceUrl: job.normalized_source_url || "",
           createdAt: job.created_at
         };
       })
@@ -267,7 +287,9 @@ async function loadCloudState() {
       country: profile && profile.country || "",
       onboardingComplete: Boolean(profile && profile.onboarding_complete),
       betaTermsAcceptedAt: profile && profile.beta_terms_accepted_at || "",
-      privacyNoticeVersion: profile && profile.privacy_notice_version || ""
+      privacyNoticeVersion: profile && profile.privacy_notice_version || "",
+      reminderSettings: profile && profile.reminder_settings || { closing_days: 3, follow_up_days: 0, interview_hours: 24, include_plan_items: true },
+      dismissedReminders: profile && profile.dismissed_reminders || {}
     },
     activePathId: profile && profile.active_path_id || (paths[0] && paths[0].id) || "",
     cv: { fileName: profile && profile.cv_file_name || "", text: profile && profile.cv_text || "", uploadedAt: profile && profile.cv_uploaded_at || "" },
@@ -317,6 +339,10 @@ async function persistCloudState() {
         next_action: job.nextAction || "", follow_up_date: job.followUpDate || null,
         interview_at: toIsoDateTime(job.interviewAt), contact_name: job.contactName || "",
         contact_email: job.contactEmail || "",
+        source_provider: job.sourceProvider || "", external_job_id: job.externalJobId || "",
+        employment_type: job.employmentType || "", work_arrangement: job.workArrangement || "",
+        salary_text: job.salaryText || "", import_metadata: job.importMetadata || {},
+        normalized_source_url: normalizeJobUrl(job.source),
         notes: job.notes || "",
         updated_at: new Date().toISOString()
       };
@@ -337,6 +363,8 @@ async function persistCloudState() {
     onboarding_complete: Boolean(pendingState.profile.onboardingComplete),
     beta_terms_accepted_at: pendingState.profile.betaTermsAcceptedAt || null,
     privacy_notice_version: pendingState.profile.privacyNoticeVersion || null,
+    reminder_settings: pendingState.profile.reminderSettings || {},
+    dismissed_reminders: pendingState.profile.dismissedReminders || {},
     updated_at: new Date().toISOString()
   });
   if (profileResult.error) throw profileResult.error;
@@ -833,6 +861,7 @@ function render() {
     renderProgress(null);
     renderApplicationCockpit();
     renderInterviewPractice();
+    renderReminders();
     return;
   }
   const items = analysisFor(path);
@@ -865,6 +894,7 @@ function render() {
   renderProgress(path);
   renderApplicationCockpit();
   renderInterviewPractice();
+  renderReminders();
   renderSetupChecklist(path);
   renderNextAction(path);
   document.getElementById("pageTitle").textContent = activeView === "overview" ? "Your next move"
@@ -915,6 +945,170 @@ function renderJobs(box, jobs) {
 function applicationRecords() {
   return state.paths.flatMap(function(path) {
     return path.jobs.map(function(job) { return { job: job, path: path }; });
+  });
+}
+
+function normalizeJobUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:") return "";
+    url.hash = "";
+    [...url.searchParams.keys()].forEach(function(key) {
+      if (/^(utm_|fbclid$|gclid$|trk$|tracking)/i.test(key)) url.searchParams.delete(key);
+    });
+    url.searchParams.sort();
+    return url.href.replace(/\/$/, "");
+  } catch (_error) {
+    return "";
+  }
+}
+
+function normalizedWords(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function descriptionSimilarity(left, right) {
+  const leftWords = new Set(normalizedWords(left).split(" ").filter(function(word) { return word.length > 3; }).slice(0, 500));
+  const rightWords = new Set(normalizedWords(right).split(" ").filter(function(word) { return word.length > 3; }).slice(0, 500));
+  if (!leftWords.size || !rightWords.size) return 0;
+  let shared = 0;
+  leftWords.forEach(function(word) { if (rightWords.has(word)) shared += 1; });
+  return shared / Math.min(leftWords.size, rightWords.size);
+}
+
+function findDuplicateJob(candidate, excludedId) {
+  const source = normalizeJobUrl(candidate.source);
+  const title = normalizedWords(candidate.title);
+  const company = normalizedWords(candidate.company);
+  for (const record of applicationRecords()) {
+    if (record.job.id === excludedId) continue;
+    if (source && source === normalizeJobUrl(record.job.source)) {
+      return { record: record, reason: "The source URL matches an existing opportunity." };
+    }
+    if (
+      candidate.sourceProvider && candidate.externalJobId &&
+      candidate.sourceProvider === record.job.sourceProvider &&
+      candidate.externalJobId === record.job.externalJobId
+    ) {
+      return { record: record, reason: "The provider job ID matches an existing opportunity." };
+    }
+    if (
+      title && company && title === normalizedWords(record.job.title) &&
+      company === normalizedWords(record.job.company) &&
+      descriptionSimilarity(candidate.description, record.job.description) >= 0.72
+    ) {
+      return { record: record, reason: "The company, title, and description closely match an existing opportunity." };
+    }
+  }
+  return null;
+}
+
+function reminderSettings() {
+  return Object.assign(
+    { closing_days: 3, follow_up_days: 0, interview_hours: 24, include_plan_items: true },
+    state.profile.reminderSettings || {},
+  );
+}
+
+function reminderItems() {
+  const settings = reminderSettings();
+  const now = Date.now();
+  const dismissed = state.profile.dismissedReminders || {};
+  const items = [];
+  function add(item) {
+    const dismissal = dismissed[item.key];
+    if (dismissal === "dismissed" || (dismissal && new Date(dismissal).getTime() > now)) return;
+    items.push(item);
+  }
+  applicationRecords().forEach(function(record) {
+    const job = record.job;
+    if (["rejected", "archived"].includes(job.status || "saved")) return;
+    if (job.followUpDate) {
+      const due = new Date(job.followUpDate + "T09:00:00").getTime();
+      if (due <= now + Number(settings.follow_up_days || 0) * 86400000) {
+        add({
+          key: "follow-up:" + job.id + ":" + job.followUpDate, kind: "Follow up",
+          title: job.title + (job.company ? " · " + job.company : ""), due: due,
+          jobId: job.id, pathId: record.path.id,
+        });
+      }
+    }
+    if (job.closingDate && (job.status || "saved") === "saved") {
+      const due = new Date(job.closingDate + "T23:59:59").getTime();
+      if (due >= now - 86400000 && due <= now + Number(settings.closing_days || 3) * 86400000) {
+        add({
+          key: "closing:" + job.id + ":" + job.closingDate, kind: "Closing soon",
+          title: job.title + (job.company ? " · " + job.company : ""), due: due,
+          jobId: job.id, pathId: record.path.id,
+        });
+      }
+    }
+    if (job.interviewAt) {
+      const due = new Date(job.interviewAt).getTime();
+      if (due >= now - 6 * 3600000 && due <= now + Number(settings.interview_hours || 24) * 3600000) {
+        add({
+          key: "interview:" + job.id + ":" + job.interviewAt, kind: "Interview",
+          title: job.title + (job.company ? " · " + job.company : ""), due: due,
+          jobId: job.id, pathId: record.path.id,
+        });
+      }
+    }
+  });
+  if (settings.include_plan_items) {
+    (state.actionItems || []).filter(function(item) {
+      return item.target_date && item.status !== "completed";
+    }).forEach(function(item) {
+      const due = new Date(item.target_date + "T18:00:00").getTime();
+      if (due <= now + 3 * 86400000) {
+        add({
+          key: "plan:" + item.id + ":" + item.target_date, kind: "Plan due",
+          title: item.title, due: due, planId: item.id,
+        });
+      }
+    });
+  }
+  return items.sort(function(left, right) { return left.due - right.due; });
+}
+
+function renderReminders() {
+  const items = reminderItems();
+  const count = document.getElementById("reminderCount");
+  count.textContent = String(items.length);
+  count.classList.toggle("hidden", !items.length);
+  const list = document.getElementById("reminderList");
+  list.innerHTML = items.length ? items.map(function(item) {
+    const overdue = item.due < Date.now();
+    return '<article class="reminder-row"><button type="button" class="reminder-open" data-reminder-open="' +
+      safe(item.key) + '"><strong>' + safe(item.kind) + '</strong><span>' + safe(item.title) +
+      '</span><time>' + safe(overdue ? "Overdue" : applicationDateLabel(new Date(item.due).toISOString(), true)) +
+      '</time></button><div><button type="button" class="text-button" data-reminder-snooze="' +
+      safe(item.key) + '">Tomorrow</button><button type="button" class="text-button" data-reminder-dismiss="' +
+      safe(item.key) + '">Dismiss</button></div></article>';
+  }).join("") : '<div class="empty-state">Nothing needs your attention right now.</div>';
+  const settings = reminderSettings();
+  document.getElementById("reminderClosingDays").value = String(settings.closing_days);
+  document.getElementById("reminderInterviewHours").value = String(settings.interview_hours);
+  document.getElementById("reminderPlanItems").checked = settings.include_plan_items !== false;
+  list.querySelectorAll("[data-reminder-open]").forEach(function(button) {
+    button.addEventListener("click", function() {
+      const item = items.find(function(entry) { return entry.key === button.dataset.reminderOpen; });
+      closeModal("reminderModal");
+      if (item && item.jobId) openJobModal(item.jobId, item.pathId);
+      else if (item && item.planId) {
+        setView("plan");
+        openPlanItemModal(state.actionItems.find(function(entry) { return entry.id === item.planId; }));
+      }
+    });
+  });
+  list.querySelectorAll("[data-reminder-snooze], [data-reminder-dismiss]").forEach(function(button) {
+    button.addEventListener("click", function() {
+      const key = button.dataset.reminderSnooze || button.dataset.reminderDismiss;
+      state.profile.dismissedReminders[key] = button.dataset.reminderSnooze
+        ? new Date(Date.now() + 86400000).toISOString()
+        : "dismissed";
+      saveState();
+      renderReminders();
+    });
   });
 }
 
@@ -1648,8 +1842,11 @@ function renderProfile() {
   document.getElementById("profileCareerGoal").value = state.profile.careerGoal || "";
   document.getElementById("profileExperience").value = state.profile.experienceLevel || "";
   document.getElementById("profileCountry").value = state.profile.country || "";
-  document.getElementById("cvText").value = state.cv.text || "";
-  document.getElementById("cvStatus").textContent = state.cv.fileName || (state.cv.text ? "Pasted CV evidence" : "No CV uploaded");
+  if (!pendingCvUpload) {
+    document.getElementById("cvText").value = state.cv.text || "";
+    document.getElementById("cvStatus").textContent = state.cv.fileName || (state.cv.text ? "Pasted CV evidence" : "No CV uploaded");
+    document.getElementById("cvOcrReview").classList.add("hidden");
+  }
   const details = document.getElementById("cvFileDetails");
   details.classList.toggle("hidden", !state.cv.fileName);
   if (state.cv.fileName) details.textContent = state.cv.fileName + " · extracted " + formatDate(state.cv.uploadedAt);
@@ -1701,6 +1898,13 @@ function openJobModal(jobId, pathId) {
   document.getElementById("jobCompany").value = job ? job.company : "";
   document.getElementById("jobLocation").value = job ? job.location : "";
   document.getElementById("jobSource").value = job ? job.source : "";
+  document.getElementById("jobSourceProvider").value = job ? job.sourceProvider || "" : "";
+  document.getElementById("jobExternalId").value = job ? job.externalJobId || "" : "";
+  document.getElementById("jobImportMetadata").value = job ? JSON.stringify(job.importMetadata || {}) : "";
+  document.getElementById("jobDuplicateOverride").value = "";
+  document.getElementById("jobEmploymentType").value = job ? job.employmentType || "" : "";
+  document.getElementById("jobWorkArrangement").value = job ? job.workArrangement || "" : "";
+  document.getElementById("jobSalaryText").value = job ? job.salaryText || "" : "";
   document.getElementById("jobDescription").value = job ? job.description : "";
   document.getElementById("jobStatus").value = job ? job.status || "saved" : "saved";
   document.getElementById("jobClosingDate").value = job ? job.closingDate || "" : "";
@@ -1712,6 +1916,10 @@ function openJobModal(jobId, pathId) {
   document.getElementById("jobContactEmail").value = job ? job.contactEmail || "" : "";
   document.getElementById("jobNotes").value = job ? job.notes || "" : "";
   document.getElementById("jobImportStatus").textContent = "";
+  document.getElementById("jobImportPreview").classList.add("hidden");
+  document.getElementById("jobImportPreview").innerHTML = "";
+  document.getElementById("jobDuplicateWarning").classList.add("hidden");
+  pendingDuplicate = null;
   document.getElementById("jobModalTitle").textContent = job ? "Edit job description" : "Add job to " + (path ? path.name : "this path");
   openModal("jobModal");
 }
@@ -1923,7 +2131,7 @@ async function exportAccount() {
   }
 }
 
-async function extractPdf(file) {
+async function extractPdf(file, onProgress) {
   if (!window.pdfjsLib) throw new Error("PDF parser is still loading. Try again.");
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
@@ -1934,10 +2142,51 @@ async function extractPdf(file) {
     pages.push(content.items.map(function(item) { return item.str; }).join(" "));
   }
   const extracted = pages.join("\n\n").replace(/[ \t]+/g, " ").trim();
-  if (extracted.length < 50) {
-    throw new Error("This PDF appears to be scanned or image-only. Paste the CV text, or upload a text-based PDF.");
+  if (extracted.length >= 50) {
+    return { text: extracted, method: "text", confidence: 100, pages: pdf.numPages };
   }
-  return extracted;
+  if (!window.Tesseract) throw new Error("The browser OCR engine is still loading. Try again.");
+  if (pdf.numPages > 12) throw new Error("Scanned CVs are limited to 12 pages.");
+  if (onProgress) onProgress("Scanned PDF detected · starting private browser OCR…");
+  const localAssets = Boolean(document.querySelector('script[src*="node_modules/tesseract.js"]'));
+  const worker = await window.Tesseract.createWorker("eng", 1, {
+    workerPath: localAssets ? "/node_modules/tesseract.js/dist/worker.min.js" : "/vendor/tesseract/worker.min.js",
+    corePath: localAssets ? "/node_modules/tesseract.js-core" : "/vendor/tesseract/core",
+    logger: function(message) {
+      if (onProgress && message.status === "recognizing text") {
+        onProgress("Reading scanned text · " + Math.round(Number(message.progress || 0) * 100) + "%");
+      }
+    },
+  });
+  const ocrPages = [];
+  const confidences = [];
+  try {
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      if (onProgress) onProgress("Reading scanned page " + pageNumber + " of " + pdf.numPages + "…");
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1.7 });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const context = canvas.getContext("2d", { alpha: false });
+      await page.render({ canvasContext: context, viewport: viewport }).promise;
+      const result = await worker.recognize(canvas);
+      ocrPages.push(String(result.data.text || "").trim());
+      confidences.push(Number(result.data.confidence || 0));
+      canvas.width = 1;
+      canvas.height = 1;
+    }
+  } finally {
+    await worker.terminate();
+  }
+  const text = ocrPages.join("\n\n").replace(/[ \t]+/g, " ").trim();
+  if (text.length < 50) throw new Error("The scan did not contain enough readable text. Try a clearer PDF or paste the CV text.");
+  return {
+    text: text,
+    method: "ocr",
+    confidence: confidences.length ? Math.round(confidences.reduce(function(sum, value) { return sum + value; }, 0) / confidences.length) : 0,
+    pages: pdf.numPages,
+  };
 }
 
 function setView(view) {
@@ -2038,6 +2287,21 @@ document.getElementById("applicationSearch").addEventListener("input", function(
 document.getElementById("applicationPathFilter").addEventListener("change", function() {
   applicationPathFilter = this.value;
   renderApplicationCockpit();
+});
+document.getElementById("reminderButton").addEventListener("click", function() {
+  renderReminders();
+  openModal("reminderModal");
+});
+document.getElementById("saveReminderSettings").addEventListener("click", function() {
+  state.profile.reminderSettings = {
+    closing_days: Number(document.getElementById("reminderClosingDays").value),
+    follow_up_days: 0,
+    interview_hours: Number(document.getElementById("reminderInterviewHours").value),
+    include_plan_items: document.getElementById("reminderPlanItems").checked,
+  };
+  saveState();
+  renderReminders();
+  toast("Reminder settings saved");
 });
 document.getElementById("readinessExplainer").addEventListener("click", function() {
   const details = document.getElementById("readinessDetails");
@@ -2225,8 +2489,13 @@ document.getElementById("onboardingCvFile").addEventListener("change", async fun
   nextButton.disabled = true;
   document.getElementById("onboardingCvLabel").textContent = "Extracting " + file.name + "…";
   try {
-    document.getElementById("onboardingCvText").value = await extractPdf(file);
-    document.getElementById("onboardingCvLabel").textContent = file.name + " is ready";
+    const extraction = await extractPdf(file, function(message) {
+      document.getElementById("onboardingCvLabel").textContent = message;
+    });
+    document.getElementById("onboardingCvText").value = extraction.text;
+    document.getElementById("onboardingCvLabel").textContent = extraction.method === "ocr"
+      ? file.name + " · OCR ready for your review"
+      : file.name + " is ready";
   } catch (error) { document.getElementById("onboardingMessage").textContent = error.message || "Could not extract this PDF."; }
   finally { nextButton.disabled = false; }
 });
@@ -2388,6 +2657,24 @@ document.getElementById("importJobButton").addEventListener("click", async funct
     document.getElementById("jobLocation").value = job.location;
     document.getElementById("jobDescription").value = job.description;
     document.getElementById("jobSource").value = job.sourceUrl;
+    document.getElementById("jobSourceProvider").value = job.sourceProvider || "";
+    document.getElementById("jobExternalId").value = job.externalJobId || "";
+    document.getElementById("jobImportMetadata").value = JSON.stringify(job.importMetadata || {});
+    document.getElementById("jobClosingDate").value = job.closingDate || "";
+    document.getElementById("jobEmploymentType").value = job.employmentType || "";
+    document.getElementById("jobWorkArrangement").value = job.workArrangement || "";
+    document.getElementById("jobSalaryText").value = job.salaryText || "";
+    document.getElementById("jobDuplicateOverride").value = "";
+    const preview = document.getElementById("jobImportPreview");
+    const imported = [
+      job.employmentType, job.workArrangement, job.salaryText,
+      job.closingDate && "Closes " + job.closingDate,
+    ].filter(Boolean);
+    preview.innerHTML = '<strong>Import preview</strong><p>' +
+      safe(imported.length ? imported.join(" · ") : "Core job fields were found. Optional details were not published.") +
+      '</p><span>' + safe(job.importMetadata?.method === "json_ld_and_page" ? "Structured listing and page text" : "Page text") +
+      ' · review every field before saving</span>';
+    preview.classList.remove("hidden");
     status.textContent = "Imported. Review before saving.";
   } catch (error) {
     status.textContent = await functionErrorMessage(error, "Import failed. Paste the description instead.");
@@ -2407,6 +2694,15 @@ document.getElementById("jobForm").addEventListener("submit", function(event) {
     company: document.getElementById("jobCompany").value.trim(),
     location: document.getElementById("jobLocation").value.trim(),
     source: document.getElementById("jobSource").value.trim(),
+    sourceProvider: document.getElementById("jobSourceProvider").value,
+    externalJobId: document.getElementById("jobExternalId").value,
+    employmentType: document.getElementById("jobEmploymentType").value.trim(),
+    workArrangement: document.getElementById("jobWorkArrangement").value.trim(),
+    salaryText: document.getElementById("jobSalaryText").value.trim(),
+    importMetadata: (function() {
+      try { return JSON.parse(document.getElementById("jobImportMetadata").value || "{}"); }
+      catch (_error) { return {}; }
+    })(),
     description: document.getElementById("jobDescription").value.trim(),
     status: document.getElementById("jobStatus").value,
     closingDate: document.getElementById("jobClosingDate").value,
@@ -2419,10 +2715,37 @@ document.getElementById("jobForm").addEventListener("submit", function(event) {
     notes: document.getElementById("jobNotes").value.trim(),
     createdAt: existing ? existing.createdAt : new Date().toISOString()
   };
+  const duplicate = findDuplicateJob(record, existing && existing.id);
+  if (!existing && duplicate && document.getElementById("jobDuplicateOverride").value !== duplicate.record.job.id) {
+    pendingDuplicate = duplicate;
+    document.getElementById("jobDuplicateMessage").textContent = duplicate.reason + " " +
+      duplicate.record.job.title + (duplicate.record.job.company ? " at " + duplicate.record.job.company : "");
+    document.getElementById("jobDuplicateWarning").classList.remove("hidden");
+    document.getElementById("jobDuplicateWarning").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
   if (record.status === "applied" && !record.appliedAt) record.appliedAt = new Date().toISOString().slice(0, 10);
   if (existing) Object.assign(existing, record); else path.jobs.unshift(record);
   saveState(); closeModal("jobModal"); render(); toast(existing ? "Application updated" : "Job description added to this path");
   trackProductEvent("workflow_completed", "paths", "job");
+});
+document.getElementById("saveDuplicateButton").addEventListener("click", function() {
+  if (!pendingDuplicate) return;
+  document.getElementById("jobDuplicateOverride").value = pendingDuplicate.record.job.id;
+  document.getElementById("jobDuplicateWarning").classList.add("hidden");
+  document.getElementById("jobForm").requestSubmit();
+});
+document.getElementById("openDuplicateButton").addEventListener("click", function() {
+  if (!pendingDuplicate) return;
+  const duplicate = pendingDuplicate;
+  closeModal("jobModal");
+  openJobModal(duplicate.record.job.id, duplicate.record.path.id);
+});
+["jobSource", "jobTitle", "jobCompany", "jobDescription"].forEach(function(id) {
+  document.getElementById(id).addEventListener("input", function() {
+    document.getElementById("jobDuplicateOverride").value = "";
+    document.getElementById("jobDuplicateWarning").classList.add("hidden");
+  });
 });
 
 document.getElementById("planItemForm").addEventListener("submit", async function(event) {
@@ -2489,7 +2812,22 @@ document.getElementById("cvFile").addEventListener("change", async function(even
   if (file.size > 10 * 1024 * 1024) { toast("CV files must be 10 MB or smaller"); event.target.value = ""; return; }
   document.getElementById("cvStatus").textContent = "Extracting PDF…";
   try {
-    state.cv = { fileName: file.name, text: await extractPdf(file), uploadedAt: new Date().toISOString() };
+    const extraction = await extractPdf(file, function(message) {
+      document.getElementById("cvStatus").textContent = message;
+    });
+    if (extraction.method === "ocr") {
+      pendingCvUpload = { file: file, extraction: extraction };
+      document.getElementById("cvText").value = extraction.text;
+      document.getElementById("cvStatus").textContent = "OCR review required";
+      document.getElementById("cvOcrReviewMessage").textContent = "Average OCR confidence: " +
+        extraction.confidence + "%. Check names, dates, and technical terms, then save.";
+      document.getElementById("cvOcrReview").classList.remove("hidden");
+      document.getElementById("cvSaveMessage").textContent = "Not saved yet";
+      return;
+    }
+    pendingCvUpload = null;
+    document.getElementById("cvOcrReview").classList.add("hidden");
+    state.cv = { fileName: file.name, text: extraction.text, uploadedAt: new Date().toISOString() };
     if (cloud && session) {
       const upload = await cloud.storage.from("private-cvs").upload(session.user.id + "/current-cv.pdf", file, { upsert: true, contentType: "application/pdf" });
       if (upload.error) throw upload.error;
@@ -2507,8 +2845,21 @@ document.getElementById("cvFile").addEventListener("change", async function(even
 document.getElementById("saveCvButton").addEventListener("click", async function() {
   this.disabled = true;
   try {
-    state.cv.text = document.getElementById("cvText").value.trim();
-    state.cv.uploadedAt = state.cv.uploadedAt || new Date().toISOString();
+    const text = document.getElementById("cvText").value.trim();
+    if (!text) throw new Error("Add CV text before saving");
+    if (pendingCvUpload && cloud && session) {
+      const upload = await cloud.storage.from("private-cvs").upload(
+        session.user.id + "/current-cv.pdf",
+        pendingCvUpload.file,
+        { upsert: true, contentType: "application/pdf" },
+      );
+      if (upload.error) throw upload.error;
+    }
+    state.cv.text = text;
+    state.cv.fileName = pendingCvUpload ? pendingCvUpload.file.name : state.cv.fileName;
+    state.cv.uploadedAt = pendingCvUpload ? new Date().toISOString() : state.cv.uploadedAt || new Date().toISOString();
+    pendingCvUpload = null;
+    document.getElementById("cvOcrReview").classList.add("hidden");
     await saveState();
     const actionCreated = await ensureStarterActionAfterCv();
     render();

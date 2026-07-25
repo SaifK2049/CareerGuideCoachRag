@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -32,6 +32,22 @@ for (const file of ["index.html", "app.js", "styles.css", "admin.html", "admin.j
   await cp(resolve(root, file), resolve(output, file));
 }
 await cp(resolve(root, "assets"), resolve(output, "assets"), { recursive: true });
+const tesseractOutput = resolve(output, "vendor", "tesseract");
+const tesseractCoreOutput = resolve(tesseractOutput, "core");
+await mkdir(tesseractCoreOutput, { recursive: true });
+await cp(resolve(root, "node_modules/tesseract.js/dist/tesseract.min.js"), resolve(tesseractOutput, "tesseract.min.js"));
+await cp(resolve(root, "node_modules/tesseract.js/dist/worker.min.js"), resolve(tesseractOutput, "worker.min.js"));
+for (const file of [
+  "tesseract-core-lstm.js", "tesseract-core-lstm.wasm",
+  "tesseract-core-simd-lstm.js", "tesseract-core-simd-lstm.wasm",
+  "tesseract-core-simd.js", "tesseract-core-simd.wasm",
+  "tesseract-core.js", "tesseract-core.wasm",
+]) {
+  await cp(resolve(root, "node_modules/tesseract.js-core", file), resolve(tesseractCoreOutput, file));
+}
+const productionHtml = (await readFile(resolve(output, "index.html"), "utf8"))
+  .replace("node_modules/tesseract.js/dist/tesseract.min.js", "vendor/tesseract/tesseract.min.js");
+await writeFile(resolve(output, "index.html"), productionHtml, "utf8");
 await writeFile(
   resolve(output, "config.js"),
   `window.CAREER_RAG_CONFIG=${JSON.stringify({

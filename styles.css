@@ -81,6 +81,20 @@
 @media(max-width:900px){.interview-layout{grid-template-columns:1fr}.interview-scorebar{grid-template-columns:90px minmax(180px,1fr) 120px}}
 @media(max-width:600px){.interview-scorebar{grid-template-columns:1fr;gap:12px}.interview-stage{padding:18px}.interview-question h2{font-size:21px}.interview-answer-heading{display:grid}.interview-voice-controls{align-items:flex-start;justify-content:flex-start;flex-wrap:wrap}.interview-voice-controls span{text-align:left}.interview-assessment-columns{grid-template-columns:1fr}.interview-assessment-head{display:grid}.interview-stage .form-actions{display:grid;grid-template-columns:1fr 1fr}.interview-stage .form-actions #saveInterviewAnswerButton{grid-column:1/-1;grid-row:1}.interview-stage .form-actions #nextInterviewQuestion{margin-left:0}}
 
+.reminder-button{position:relative}.reminder-button strong{min-width:18px;height:18px;display:grid;place-items:center;background:var(--red);color:#fff;border-radius:4px;font-size:9px}
+.reminder-modal{width:min(620px,calc(100vw - 28px))}.reminder-list{display:grid;margin:18px 0 22px;border-top:1px solid var(--line)}
+.reminder-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;border-bottom:1px solid var(--line);padding:12px 0}
+.reminder-open{display:grid;grid-template-columns:100px minmax(0,1fr) auto;gap:10px;align-items:center;border:0;background:transparent;padding:0;text-align:left;color:var(--ink)}
+.reminder-open:hover span{color:var(--blue)}.reminder-open strong{font-size:10px}.reminder-open span{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reminder-open time{color:var(--amber);font-size:10px;font-weight:700;white-space:nowrap}.reminder-row>div{display:flex;gap:10px}.reminder-settings{border-top:1px solid var(--line);padding-top:14px}
+.reminder-settings summary{cursor:pointer;font-weight:700;font-size:11px}.reminder-settings .form-row{margin:14px 0 8px}.reminder-settings .consent-row{margin:12px 0}
+.import-preview,.duplicate-warning,.ocr-review{border-left:3px solid var(--green);background:var(--green-soft);margin:12px 0 16px;padding:12px 14px}
+.import-preview strong,.duplicate-warning strong,.ocr-review strong{font-size:11px}.import-preview p,.duplicate-warning p,.ocr-review p{color:var(--muted);font-size:11px;line-height:1.5;margin:5px 0}
+.import-preview span{color:var(--faint);font-size:9px}.duplicate-warning{border-left-color:var(--amber);background:var(--amber-soft)}.duplicate-warning>div{display:flex;gap:14px;align-items:center;margin-top:10px}
+.ocr-review{margin-top:12px}.ocr-review p{margin-bottom:0}
+@media(max-width:900px){.topbar-actions{gap:7px;flex-wrap:wrap;justify-content:flex-end}.sync-label{display:none}}
+@media(max-width:600px){.reminder-row{grid-template-columns:1fr}.reminder-open{grid-template-columns:85px minmax(0,1fr)}.reminder-open time{grid-column:2}.reminder-button{font-size:0}.reminder-button span,.reminder-button strong{font-size:10px}}
+
 /* Warm Orynta interface */
 :root{
   --ink:#35251c;

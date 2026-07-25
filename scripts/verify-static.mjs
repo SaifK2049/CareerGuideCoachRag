@@ -25,6 +25,7 @@ const [
   waitlistFunction,
   productMigration,
   cockpitMigration,
+  phaseOneMigration,
   interviewMigration,
   interviewAssessmentMigration,
   cvGuidanceFunction,
@@ -66,6 +67,7 @@ const [
   readFile(resolve(root, "supabase/functions/join-waitlist/index.ts"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260718225738_product_workflows.sql"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260720174347_application_cockpit.sql"), "utf8"),
+  readFile(resolve(root, "supabase/migrations/20260725114424_phase_one_productivity.sql"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260720193851_interview_preparation_gamification.sql"), "utf8"),
   readFile(resolve(root, "supabase/migrations/20260720203957_interview_assessment_voice.sql"), "utf8"),
   readFile(resolve(root, "supabase/functions/cv-guidance/index.ts"), "utf8"),
@@ -156,6 +158,9 @@ for (const surface of ["planView", "progressView", "actionPlanList", "analysisHi
 for (const surface of ["applicationsView", "applicationTodayList", "applicationPathFilter", "applicationSearch", "applicationKanban"]) {
   if (!ids.includes(surface)) throw new Error(`Application cockpit surface is missing: ${surface}`);
 }
+for (const surface of ["reminderButton", "reminderModal", "reminderList", "jobImportPreview", "jobDuplicateWarning", "cvOcrReview"]) {
+  if (!ids.includes(surface)) throw new Error(`Phase 1 surface is missing: ${surface}`);
+}
 for (const surface of ["interviewView", "interviewJobSelect", "generateInterviewButton", "interviewStage", "interviewBadgeList"]) {
   if (!ids.includes(surface)) throw new Error(`Interview preparation surface is missing: ${surface}`);
 }
@@ -174,8 +179,36 @@ for (const field of ["next_action", "follow_up_date", "interview_at", "contact_n
 for (const indexName of ["job_descriptions_user_status_follow_up_idx", "job_descriptions_user_interview_idx"]) {
   if (!cockpitMigration.includes(indexName)) throw new Error(`Application cockpit index is missing: ${indexName}`);
 }
+for (const field of ["reminder_settings", "dismissed_reminders", "source_provider", "external_job_id", "employment_type", "work_arrangement", "salary_text", "normalized_source_url"]) {
+  if (!phaseOneMigration.includes(field)) throw new Error(`Phase 1 database field is missing: ${field}`);
+}
+if (
+  !phaseOneMigration.includes("grant select, insert, update on table public.career_profiles to authenticated") ||
+  !phaseOneMigration.includes("job_descriptions_user_normalized_source_idx")
+) {
+  throw new Error("Phase 1 Data API grants or duplicate lookup index are missing");
+}
 if (!app.includes("renderApplicationCockpit") || !app.includes("data-application-stage") || !app.includes("updateApplicationStatus")) {
   throw new Error("Application cockpit rendering or pipeline interaction is missing");
+}
+if (
+  !app.includes("window.Tesseract.createWorker") ||
+  !app.includes("findDuplicateJob") ||
+  !app.includes("renderReminders") ||
+  !app.includes("OCR review required") ||
+  !importJobFunction.includes("structuredJobPostings") ||
+  !importJobFunction.includes("externalJobId")
+) {
+  throw new Error("OCR review, reminders, import preview, or duplicate detection is incomplete");
+}
+if (
+  !html.includes("node_modules/tesseract.js/dist/tesseract.min.js") ||
+  !buildScript.includes('const tesseractOutput = resolve(output, "vendor", "tesseract")') ||
+  !buildScript.includes('"worker.min.js"') ||
+  !headers.includes("'wasm-unsafe-eval'") ||
+  !headers.includes("connect-src 'self' https://*.supabase.co wss://*.supabase.co https://cdn.jsdelivr.net")
+) {
+  throw new Error("Browser OCR assets or CSP permissions are incomplete");
 }
 if (!app.includes("renderSetupChecklist") || !app.includes("data-empty-action")) {
   throw new Error("Guided checklist or actionable empty states are missing");

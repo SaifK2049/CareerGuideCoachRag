@@ -26,6 +26,38 @@ function approvedUrl(value: string): URL | null {
   }
 }
 
+function canonicalUrl(url: URL): string {
+  const canonical = new URL(url.href);
+  canonical.hash = "";
+  for (const key of [...canonical.searchParams.keys()]) {
+    if (/^(utm_|fbclid$|gclid$|trk$|tracking)/i.test(key)) canonical.searchParams.delete(key);
+  }
+  canonical.searchParams.sort();
+  return canonical.href;
+}
+
+function sourceProvider(url: URL): string {
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  return approvedHosts.find((allowed) => host === allowed || host.endsWith(`.${allowed}`)) || host;
+}
+
+function structuredJobPostings(html: string): Record<string, unknown>[] {
+  const postings: Record<string, unknown>[] = [];
+  for (const match of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      const values = Array.isArray(parsed) ? parsed : parsed?.["@graph"] || [parsed];
+      for (const value of values) {
+        const types = Array.isArray(value?.["@type"]) ? value["@type"] : [value?.["@type"]];
+        if (types.includes("JobPosting")) postings.push(value);
+      }
+    } catch (_error) {
+      // Invalid publisher JSON-LD is ignored; visible page text remains the fallback.
+    }
+  }
+  return postings.slice(0, 3);
+}
+
 Deno.serve(async (request) => {
   const startedAt = Date.now();
   let admin: any = null;
@@ -74,6 +106,7 @@ Deno.serve(async (request) => {
     const contentLength = Number(page.headers.get("content-length") || 0);
     if (contentLength > 1_000_000) return jsonResponse(request, { error: "The job page is too large to import." }, 413);
     const html = (await page.text()).slice(0, 1_000_000);
+    const structured = structuredJobPostings(html);
     const text = html.replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
@@ -93,8 +126,12 @@ Deno.serve(async (request) => {
       },
       body: JSON.stringify({
         model,
-        instructions: "Extract only the job listing fields present in the supplied page. Do not invent missing values. Keep the full useful responsibilities and requirements in description.",
-        input: text,
+        instructions: "Extract only job listing fields explicitly present in the supplied content. Prefer the supplied JobPosting JSON-LD when it is consistent with the visible page. Do not invent missing values or infer salary, employment type, dates, or work arrangement. Return dates as YYYY-MM-DD. Keep the full useful responsibilities and requirements in description.",
+        input: JSON.stringify({
+          source_url: canonicalUrl(url),
+          job_posting_json_ld: structured,
+          visible_page_text: text,
+        }),
         text: {
           format: {
             type: "json_schema",
@@ -103,12 +140,20 @@ Deno.serve(async (request) => {
             schema: {
               type: "object",
               additionalProperties: false,
-              required: ["title", "company", "location", "description"],
+              required: [
+                "title", "company", "location", "description", "closingDate",
+                "employmentType", "workArrangement", "salaryText", "externalJobId",
+              ],
               properties: {
                 title: { type: "string" },
                 company: { type: "string" },
                 location: { type: "string" },
                 description: { type: "string" },
+                closingDate: { type: "string" },
+                employmentType: { type: "string" },
+                workArrangement: { type: "string" },
+                salaryText: { type: "string" },
+                externalJobId: { type: "string" },
               },
             },
           },
@@ -131,7 +176,21 @@ Deno.serve(async (request) => {
         company: String(job.company || "").slice(0, 200),
         location: String(job.location || "").slice(0, 200),
         description: String(job.description).slice(0, 100000),
-        sourceUrl: url.href,
+        sourceUrl: canonicalUrl(url),
+        sourceProvider: sourceProvider(url),
+        externalJobId: String(job.externalJobId || "").slice(0, 240),
+        closingDate: /^\d{4}-\d{2}-\d{2}$/.test(String(job.closingDate || "")) ? job.closingDate : "",
+        employmentType: String(job.employmentType || "").slice(0, 120),
+        workArrangement: String(job.workArrangement || "").slice(0, 120),
+        salaryText: String(job.salaryText || "").slice(0, 240),
+        importMetadata: {
+          method: structured.length ? "json_ld_and_page" : "page_text",
+          extractedAt: new Date().toISOString(),
+          fieldsPresent: [
+            "title", "company", "location", "closingDate", "employmentType",
+            "workArrangement", "salaryText", "externalJobId",
+          ].filter((field) => Boolean(job[field])),
+        },
       },
     });
   } catch (error) {
