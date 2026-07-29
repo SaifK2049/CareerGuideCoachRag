@@ -6,3 +6,4 @@ config.js
 dist/
 .wrangler/
 node_modules/
+.demo-artifacts/

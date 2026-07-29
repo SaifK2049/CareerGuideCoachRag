@@ -94,6 +94,9 @@
 .ocr-review{margin-top:12px}.ocr-review p{margin-bottom:0}
 @media(max-width:900px){.topbar-actions{gap:7px;flex-wrap:wrap;justify-content:flex-end}.sync-label{display:none}}
 @media(max-width:600px){.reminder-row{grid-template-columns:1fr}.reminder-open{grid-template-columns:85px minmax(0,1fr)}.reminder-open time{grid-column:2}.reminder-button{font-size:0}.reminder-button span,.reminder-button strong{font-size:10px}}
+.local-demo-controls{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--line);padding:9px 10px;background:var(--surface)}
+.local-demo-controls>span{color:var(--muted);font-size:11px;font-weight:650}
+.local-demo-controls .text-button{color:var(--blue);white-space:nowrap}
 
 /* Warm Orynta interface */
 :root{

@@ -6,6 +6,10 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node --check app.js && node --check admin.js && node --check report.js && node --check scripts/build.mjs && node scripts/verify-static.mjs",
+    "demo:setup": "node scripts/demo-setup.mjs",
+    "demo:reset": "node scripts/demo-data.mjs",
+    "demo:stop": "npx supabase stop",
+    "dev": "node scripts/demo-server.mjs",
     "monitor:production": "node scripts/production-smoke.mjs",
     "test:integration": "node scripts/integration-test.mjs"
   },
@@ -13,6 +17,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.110.6",
+    "pdfjs-dist": "6.1.200",
     "tesseract.js": "5.1.1"
   }
 }

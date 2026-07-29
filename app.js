@@ -1,6 +1,8 @@
 const STORAGE_KEY = "career-rag-workspace-v1";
 const PRIVACY_NOTICE_VERSION = "2026-07-22";
 const config = window.CAREER_RAG_CONFIG || {};
+const isLocalDemo = config.localDemo === true
+  && ["127.0.0.1", "localhost", "::1"].includes(window.location.hostname);
 const initialAuthLinkType = new URLSearchParams(window.location.hash.slice(1)).get("type")
   || new URLSearchParams(window.location.search).get("type")
   || "";
@@ -42,7 +44,7 @@ function analyticsErrorCode(error, fallback) {
 }
 
 function trackProductEvent(eventName, surface, workflow, error) {
-  if (!cloud || !session || config.localPreview) return Promise.resolve();
+  if (!cloud || !session || config.localPreview || isLocalDemo) return Promise.resolve();
   return cloud.rpc("record_product_event", {
     p_event_name: eventName,
     p_surface: surface || null,
@@ -1230,7 +1232,7 @@ const INTERVIEW_BADGES = [
   ["first_answer", "First answer", "Save your first practice answer"],
   ["warm_up", "Warmed up", "Answer five interview questions"],
   ["session_complete", "Full round", "Complete a six-question round"],
-  ["streak_3", "In rhythm", "Practise on three consecutive days"],
+  ["streak_3", "In rhythm", "Practice on three consecutive days"],
   ["xp_500", "Interview ready", "Earn 500 practice XP"]
 ];
 
@@ -1314,7 +1316,7 @@ async function ensureInterviewAssessment(sessionId, force) {
     practice.assessment_failure_code = null;
     renderInterviewPractice();
     try {
-      if (config.localPreview) {
+      if (config.localPreview || isLocalDemo) {
         const answers = state.interviewAnswers.filter(function(item) { return item.session_id === sessionId; });
         practice.assessment = localInterviewAssessment(practice, answers);
         practice.assessment_status = "succeeded";
@@ -1368,6 +1370,16 @@ async function transcribeInterviewRecording(blob, question) {
   if (status) status.textContent = "Transcribing your answer…";
   if (button) button.disabled = true;
   try {
+    if (isLocalDemo) {
+      const textarea = stage.querySelector("#interviewAnswer");
+      if (!textarea) return;
+      const transcript = "In this synthetic example, I stabilised the service, compared version-level errors and traces, rolled back safely, and then added release-aware alerts so the same detection gap would not recur.";
+      textarea.value = textarea.value.trim() ? textarea.value.trim() + "\n\n" + transcript : transcript;
+      textarea.focus();
+      status.textContent = "Deterministic local transcript added. Review it before saving.";
+      toast("Local demo transcript ready");
+      return;
+    }
     const extension = blob.type.includes("mp4") ? "m4a" : "webm";
     const form = new FormData();
     form.append("audio", new File([blob], "interview-answer." + extension, { type: blob.type.split(";")[0] }), "interview-answer." + extension);
@@ -1457,7 +1469,7 @@ async function generateInterviewPractice() {
   button.textContent = "Building your round…";
   trackProductEvent("workflow_started", "interview", "interview_practice");
   try {
-    if (config.localPreview) {
+    if (config.localPreview || isLocalDemo) {
       const practice = {
         id: crypto.randomUUID(), job_id: record.job.id, path_id: record.path.id,
         title: record.job.title, company: record.job.company || "",
@@ -1467,7 +1479,8 @@ async function generateInterviewPractice() {
       state.interviewSessions.unshift(practice);
       selectedInterviewSessionId = practice.id;
       selectedInterviewQuestion = 0;
-      saveState();
+      if (isLocalDemo) localStorage.setItem(cacheKey(), JSON.stringify(state));
+      else saveState();
       render();
       toast("Practice round ready");
       return;
@@ -1497,7 +1510,7 @@ async function saveInterviewAnswer(sessionId, questionIndex, answerText, selfRat
   button.disabled = true;
   button.textContent = "Saving answer…";
   try {
-    if (config.localPreview) {
+    if (config.localPreview || isLocalDemo) {
       const practice = state.interviewSessions.find(function(item) { return item.id === sessionId; });
       const existing = state.interviewAnswers.find(function(item) { return item.session_id === sessionId && item.question_index === questionIndex; });
       let answerXp = 0;
@@ -1625,12 +1638,12 @@ function renderInterviewPractice() {
     : '<button type="button" class="button button-light" id="interviewPremiumVoiceButton">Microphone · Premium</button>';
   const voiceStatus = voiceAllowed
     ? (recordingSupported ? "Up to 2 minutes. Audio is transcribed and not stored." : "Recording is not supported in this browser. You can still type your answer.")
-    : "Upgrade to practise aloud and turn your recording into an editable transcript.";
+    : "Upgrade to practice aloud and turn your recording into an editable transcript.";
   stage.innerHTML = '<div class="interview-stage-head"><div><span>' + safe(practice.title) + (practice.company ? " · " + safe(practice.company) : "") + '</span><h3>Question ' + (selectedInterviewQuestion + 1) + " of " + questions.length + '</h3></div><strong>' + Number(practice.answered_count || 0) + "/" + questions.length + " complete</strong></div>"
     + '<div class="interview-question-progress">' + questions.map(function(_item, index) { return '<button type="button" class="' + (index === selectedInterviewQuestion ? "is-current" : answers.some(function(saved) { return saved.question_index === index; }) ? "is-done" : "") + '" data-interview-question="' + index + '" aria-label="Open question ' + (index + 1) + '"></button>'; }).join("") + '</div>'
     + interviewAssessmentMarkup(practice)
     + '<article class="interview-question"><div class="interview-question-meta"><span>' + safe(question.category) + '</span><span>' + safe(question.difficulty) + '</span></div><h2>' + safe(question.question) + '</h2><p>' + safe(question.why_it_matters) + '</p></article>'
-    + '<form id="interviewAnswerForm"><div class="interview-answer-heading"><label class="field-label" for="interviewAnswer">Practise your answer</label><div class="interview-voice-controls">' + voiceButton + '<span id="interviewRecordingStatus" aria-live="polite">' + safe(voiceStatus) + '</span></div></div><textarea class="textarea" id="interviewAnswer" rows="9" maxlength="8000" placeholder="Write the answer you would give aloud. Specific examples earn the strongest practice value.">' + safe(answer && answer.answer_text || "") + '</textarea><div class="interview-rating"><label class="field-label" for="interviewRating">How confident did that feel?</label><select class="input" id="interviewRating"><option value="1">1 · I struggled</option><option value="2">2 · Needs work</option><option value="3">3 · Getting there</option><option value="4">4 · Strong</option><option value="5">5 · Ready to say aloud</option></select></div><div class="form-actions"><button type="button" class="button button-light" id="previousInterviewQuestion"' + (selectedInterviewQuestion === 0 ? " disabled" : "") + '>Previous</button><button type="submit" class="button button-dark" id="saveInterviewAnswerButton">' + (answer ? "Update answer" : "Save answer") + '</button><button type="button" class="button button-light" id="nextInterviewQuestion"' + (selectedInterviewQuestion === questions.length - 1 ? " disabled" : "") + '>Next</button></div></form>'
+    + '<form id="interviewAnswerForm"><div class="interview-answer-heading"><label class="field-label" for="interviewAnswer">Practice your answer</label><div class="interview-voice-controls">' + voiceButton + '<span id="interviewRecordingStatus" aria-live="polite">' + safe(voiceStatus) + '</span></div></div><textarea class="textarea" id="interviewAnswer" rows="9" maxlength="8000" placeholder="Write the answer you would give aloud. Specific examples earn the strongest practice value.">' + safe(answer && answer.answer_text || "") + '</textarea><div class="interview-rating"><label class="field-label" for="interviewRating">How confident did that feel?</label><select class="input" id="interviewRating"><option value="1">1 · I struggled</option><option value="2">2 · Needs work</option><option value="3">3 · Getting there</option><option value="4">4 · Strong</option><option value="5">5 · Ready to say aloud</option></select></div><div class="form-actions"><button type="button" class="button button-light" id="previousInterviewQuestion"' + (selectedInterviewQuestion === 0 ? " disabled" : "") + '>Previous</button><button type="submit" class="button button-dark" id="saveInterviewAnswerButton">' + (answer ? "Update answer" : "Save answer") + '</button><button type="button" class="button button-light" id="nextInterviewQuestion"' + (selectedInterviewQuestion === questions.length - 1 ? " disabled" : "") + '>Next</button></div></form>'
     + (answer ? '<section class="interview-coaching"><p class="eyebrow">Answer coaching</p><h3>A structure to rehearse</h3><p>' + safe(question.answer_framework) + '</p><h4>Evidence to bring in</h4><ul>' + question.evidence_prompts.map(function(prompt) { return "<li>" + safe(prompt) + "</li>"; }).join("") + '</ul><div class="interview-sources">Grounded in ' + question.evidence_labels.map(function(label) { return "<span>" + safe(sources.get(label) || label) + "</span>"; }).join("") + "</div></section>" : '<p class="interview-coaching-note">Save an answer to reveal a role-specific structure and evidence prompts.</p>');
   stage.querySelector("#interviewRating").value = String(answer && answer.self_rating || 3);
   stage.querySelectorAll("[data-interview-question]").forEach(function(button) {
@@ -2103,16 +2116,18 @@ function downloadJson(payload, fileName) {
 }
 
 async function exportAccount() {
-  if (config.localPreview) {
+  if (config.localPreview || isLocalDemo) {
     downloadJson({
       schema_version: "1.0",
       product: "Orynta",
       exported_at: new Date().toISOString(),
-      local_preview: true,
+      local_preview: Boolean(config.localPreview),
+      local_demo: isLocalDemo,
+      synthetic_data: isLocalDemo,
       workspace: state,
       rag_documents: ragDocuments()
     }, "orynta-account-export.json");
-    toast("Preview account data exported");
+    toast(isLocalDemo ? "Synthetic local account data exported" : "Preview account data exported");
     return;
   }
   if (!cloud || !session) { toast("Sign in before exporting account data"); return; }
@@ -2133,7 +2148,9 @@ async function exportAccount() {
 
 async function extractPdf(file, onProgress) {
   if (!window.pdfjsLib) throw new Error("PDF parser is still loading. Try again.");
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = isLocalDemo
+    ? "/__demo/vendor/pdf.worker.mjs"
+    : "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
   const pages = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
@@ -2586,10 +2603,22 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
   }, 5000));
   try {
     await saveQueue;
-    const result = await cloud.functions.invoke("analyze-career", {
-      headers: { "x-request-id": requestId },
-      body: { requestId: requestId, pathId: path.id, targetRole: path.target, documents: ragDocuments() }
-    });
+    const result = isLocalDemo
+      ? await (async function() {
+        const response = await fetch(config.localDemoApi + "/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+          body: JSON.stringify({ requestId: requestId, pathId: path.id, targetRole: path.target })
+        });
+        const data = await response.json();
+        return response.ok
+          ? { data: data, error: null }
+          : { data: data, error: new Error(data.error || "Local analysis failed") };
+      })()
+      : await cloud.functions.invoke("analyze-career", {
+        headers: { "x-request-id": requestId },
+        body: { requestId: requestId, pathId: path.id, targetRole: path.target, documents: ragDocuments() }
+      });
     if (result.error) throw result.error;
     if (result.data.access) {
       accountAccess.rag_used = result.data.access.used;
@@ -2649,7 +2678,25 @@ document.getElementById("importJobButton").addEventListener("click", async funct
   this.disabled = true;
   status.textContent = "Importing…";
   try {
-    const result = await cloud.functions.invoke("import-job", { body: { url: url } });
+    const result = isLocalDemo ? {
+      error: null,
+      data: {
+        job: {
+          title: "Synthetic Imported Platform Engineer",
+          company: "Local Demo Company",
+          location: "Berlin · Hybrid",
+          description: "Synthetic local listing requiring Python, PostgreSQL, Docker, Kubernetes, CI/CD, Azure and observability. No external page was fetched.",
+          sourceUrl: "https://example.invalid/jobs/imported-demo",
+          sourceProvider: "synthetic-local",
+          externalJobId: "ORYNTA-DEMO-IMPORT",
+          closingDate: new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10),
+          employmentType: "Full-time",
+          workArrangement: "Hybrid",
+          salaryText: "€80,000–€94,000",
+          importMetadata: { method: "local_demo_fixture", synthetic: true }
+        }
+      }
+    } : await cloud.functions.invoke("import-job", { body: { url: url } });
     if (result.error || !result.data?.job) throw result.error || new Error(result.data?.error || "Import failed");
     const job = result.data.job;
     document.getElementById("jobTitle").value = job.title;
@@ -2900,7 +2947,24 @@ document.getElementById("generateCvGuidanceButton").addEventListener("click", as
   this.textContent = "Generating…";
   try {
     await saveQueue;
-    const result = await cloud.functions.invoke("cv-guidance", { body: { jobId: jobId } });
+    const result = isLocalDemo ? {
+      error: null,
+      data: {
+        guidance: {
+          id: crypto.randomUUID(),
+          user_id: session.user.id,
+          path_id: activePath().id,
+          job_id: jobId,
+          summary: "Deterministic local guidance: lead with measured backend delivery and label Azure and Kubernetes evidence precisely.",
+          suggestions: [
+            { section: "Summary", recommendation: "Lead with the 60% release-time improvement.", reason: "It is measurable and directly relevant." },
+            { section: "Projects", recommendation: "Add the local platform case study and state its non-production scope.", reason: "It demonstrates progress without overstating experience." }
+          ],
+          model: "local-demo-deterministic-v1",
+          created_at: new Date().toISOString()
+        }
+      }
+    } : await cloud.functions.invoke("cv-guidance", { body: { jobId: jobId } });
     if (result.error || !result.data?.guidance) throw result.error || new Error("Guidance failed");
     state.cvGuidance.unshift(result.data.guidance);
     renderCvGuidance(result.data.guidance);
@@ -3192,6 +3256,41 @@ async function initializeCloud() {
       window.setTimeout(function() { refreshAccountAccess().catch(function() {}); }, 1000);
     }
   }
+}
+
+if (isLocalDemo) {
+  document.getElementById("localDemoControls").classList.remove("hidden");
+  document.getElementById("resetDemoButton").addEventListener("click", async function() {
+    if (!session) { toast("Sign in to the demo account before resetting"); return; }
+    this.disabled = true;
+    this.textContent = "Resetting…";
+    try {
+      const response = await fetch(config.localDemoApi + "/reset", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + session.access_token }
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Demo reset failed");
+      await cloud.auth.signOut({ scope: "local" });
+      const login = await cloud.auth.signInWithPassword({
+        email: "demo@orynta.local",
+        password: "OryntaDemo2026!"
+      });
+      if (login.error) throw login.error;
+      session = login.data.session;
+      await loadCloudState();
+      cloudReady = true;
+      setView("overview");
+      render();
+      localStorage.removeItem(STORAGE_KEY + ":preview");
+      toast("Demo data restored");
+    } catch (error) {
+      toast(error.message || "Demo data could not be reset");
+    } finally {
+      this.disabled = false;
+      this.textContent = "Reset demo data";
+    }
+  });
 }
 
 initializeCloud().catch(function(error) {
