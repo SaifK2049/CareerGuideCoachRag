@@ -1,6 +1,8 @@
 const STORAGE_KEY = "career-rag-workspace-v1";
 const PRIVACY_NOTICE_VERSION = "2026-07-22";
 const config = window.CAREER_RAG_CONFIG || {};
+const isLocalDemo = config.localDemo === true
+  && ["127.0.0.1", "localhost", "::1"].includes(window.location.hostname);
 const initialAuthLinkType = new URLSearchParams(window.location.hash.slice(1)).get("type")
   || new URLSearchParams(window.location.search).get("type")
   || "";
@@ -30,6 +32,10 @@ const analyticsSessionId = (function() {
 })();
 let appOpenTracked = false;
 let saveQueue = Promise.resolve();
+let lastCareerTwinSourceSignature = "";
+let careerTwinRefreshTimer = null;
+let careerTwinRefreshPending = false;
+let careerTwinRefreshRunning = false;
 let accountAccess = { plan: "free", status: "free", rag_used: 0, rag_limit: betaMode ? 10 : 2, features: {} };
 let onboardingStep = 1;
 const pendingAnalysisRequests = {};
@@ -42,7 +48,7 @@ function analyticsErrorCode(error, fallback) {
 }
 
 function trackProductEvent(eventName, surface, workflow, error) {
-  if (!cloud || !session || config.localPreview) return Promise.resolve();
+  if (!cloud || !session || config.localPreview || isLocalDemo) return Promise.resolve();
   return cloud.rpc("record_product_event", {
     p_event_name: eventName,
     p_surface: surface || null,
@@ -126,7 +132,7 @@ const CERTS = {
 
 const demoState = {
   profile: {
-    displayName: "Demo user", careerGoal: "Explore Orynta", experienceLevel: "mid", country: "",
+    displayName: "Demo user", careerGoal: "Explore Orynta", experienceLevel: "mid", country: "", guidanceLocale: "en",
     onboardingComplete: true, betaTermsAcceptedAt: "2026-07-16T00:00:00.000Z",
     privacyNoticeVersion: PRIVACY_NOTICE_VERSION,
     reminderSettings: { closing_days: 3, follow_up_days: 0, interview_hours: 24, include_plan_items: true },
@@ -157,7 +163,15 @@ const demoState = {
   sharedReports: [],
   interviewSessions: [],
   interviewAnswers: [],
-  interviewGameProfile: { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] }
+  interviewVideoAssessments: [],
+  portfolioAssets: [],
+  careerCredentials: [],
+  interviewGameProfile: { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] },
+  careerOperatingSystem: {
+    available: false, twin: null, graph: { node_count: 0, edge_count: 0, nodes_by_type: {} },
+    recommendations: [], nodes: [], edges: [], readiness: null, simulations: [], roadmaps: [],
+    portfolio: { asset_count: 0, credential_count: 0, verified_credentials: 0 }
+  }
 };
 
 let state = loadState();
@@ -179,8 +193,51 @@ let interviewRecordingChunks = [];
 let interviewRecordingStartedAt = 0;
 let interviewRecordingTimer = null;
 let interviewVoiceBusy = false;
+let interviewVideoFrames = [];
+let interviewVideoPreview = null;
 let pendingCvUpload = null;
 let pendingDuplicate = null;
+let careerGraphFilter = "all";
+let selectedCareerGraphNodeId = "";
+const skillGraphDetailCache = new Map();
+let institutionState = {
+  memberships: [],
+  consents: [],
+  cohorts: [],
+  dashboard: null,
+  workforce: null,
+  organizationId: "",
+  cohortId: "",
+  loaded: false,
+  loading: false,
+  error: ""
+};
+let mentorNetworkState = {
+  matches: [],
+  profile: null,
+  profileLoaded: false,
+  loaded: false,
+  loading: false,
+  error: ""
+};
+let labourMarketState = { observations: [], loaded: false, loading: false, error: "" };
+let companyBrief = null;
+let companyBriefLoading = false;
+
+function emptyCareerOperatingSystem() {
+  return {
+    available: false,
+    twin: null,
+    graph: { node_count: 0, edge_count: 0, nodes_by_type: {} },
+    recommendations: [],
+    nodes: [],
+    edges: [],
+    readiness: null,
+    simulations: [],
+    roadmaps: [],
+    portfolio: { asset_count: 0, credential_count: 0, verified_credentials: 0 }
+  };
+}
 
 function loadState() {
   if (!config.localPreview) return emptyState();
@@ -189,10 +246,15 @@ function loadState() {
     if (!loaded) return structuredClone(demoState);
     loaded.interviewSessions = loaded.interviewSessions || [];
     loaded.interviewAnswers = loaded.interviewAnswers || [];
+    loaded.interviewVideoAssessments = loaded.interviewVideoAssessments || [];
+    loaded.portfolioAssets = loaded.portfolioAssets || [];
+    loaded.careerCredentials = loaded.careerCredentials || [];
     loaded.interviewGameProfile = loaded.interviewGameProfile || { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] };
     loaded.profile = loaded.profile || {};
+    loaded.profile.guidanceLocale = loaded.profile.guidanceLocale || "en";
     loaded.profile.reminderSettings = loaded.profile.reminderSettings || { closing_days: 3, follow_up_days: 0, interview_hours: 24, include_plan_items: true };
     loaded.profile.dismissedReminders = loaded.profile.dismissedReminders || {};
+    loaded.careerOperatingSystem = loaded.careerOperatingSystem || emptyCareerOperatingSystem();
     return loaded;
   }
   catch (error) { return structuredClone(demoState); }
@@ -200,12 +262,98 @@ function loadState() {
 
 function cacheKey() { return session ? STORAGE_KEY + ":" + session.user.id : STORAGE_KEY + ":preview"; }
 
+function careerTwinSourceSignature(value) {
+  return JSON.stringify({
+    profile: {
+      careerGoal: value.profile && value.profile.careerGoal,
+      experienceLevel: value.profile && value.profile.experienceLevel,
+      country: value.profile && value.profile.country,
+      guidanceLocale: value.profile && value.profile.guidanceLocale
+    },
+    cv: value.cv,
+    activePathId: value.activePathId,
+    paths: (value.paths || []).map(function(path) {
+      return {
+        id: path.id,
+        name: path.name,
+        target: path.target,
+        description: path.description,
+        jobs: (path.jobs || []).map(function(job) {
+          return {
+            id: job.id,
+            title: job.title,
+            company: job.company,
+            location: job.location,
+            description: job.description,
+            status: job.status,
+            appliedAt: job.appliedAt,
+            interviewAt: job.interviewAt
+          };
+        })
+      };
+    }),
+    knowledge: value.knowledge || [],
+    analyses: (value.analyses || []).map(function(item) {
+      return [item.id, item.status, item.completed_at || item.completedAt];
+    }),
+    actions: (value.actionItems || []).map(function(item) {
+      return [item.id, item.status, item.updated_at];
+    }),
+    interviews: (value.interviewSessions || []).map(function(item) {
+      return [item.id, item.status, item.assessment_status, item.updated_at];
+    }),
+    portfolio: (value.portfolioAssets || []).map(function(item) {
+      return [item.id, item.updated_at, item.analysed_at, item.technologies];
+    }),
+    credentials: (value.careerCredentials || []).map(function(item) {
+      return [item.id, item.updated_at, item.verification_status, item.expires_on];
+    })
+  });
+}
+
+function scheduleCareerTwinRefresh(delay = 1200) {
+  careerTwinRefreshPending = true;
+  if (!cloud || !session || !cloudReady || config.localPreview) return;
+  if (careerTwinRefreshTimer) window.clearTimeout(careerTwinRefreshTimer);
+  careerTwinRefreshTimer = window.setTimeout(refreshCareerTwinInBackground, delay);
+}
+
+async function refreshCareerTwinInBackground() {
+  careerTwinRefreshTimer = null;
+  if (careerTwinRefreshRunning || !careerTwinRefreshPending || !cloud || !session || !cloudReady) return;
+  careerTwinRefreshRunning = true;
+  const sourceSignature = careerTwinSourceSignature(state);
+  const updated = document.getElementById("careerTwinUpdated");
+  if (activeView === "twin" && updated) updated.textContent = "Updating from new evidence…";
+  try {
+    const result = await cloud.functions.invoke("career-intelligence", { body: { action: "refresh" } });
+    if (result.error) throw result.error;
+    await loadCareerOperatingSystem();
+    if (sourceSignature === careerTwinSourceSignature(state)) careerTwinRefreshPending = false;
+    renderCareerOperatingSystem();
+  } catch (_error) {
+    careerTwinRefreshPending = true;
+  } finally {
+    careerTwinRefreshRunning = false;
+    if (careerTwinRefreshPending && sourceSignature !== careerTwinSourceSignature(state)) {
+      scheduleCareerTwinRefresh(1200);
+    }
+  }
+}
+
 function saveState() {
+  const sourceSignature = careerTwinSourceSignature(state);
+  const twinSourcesChanged = Boolean(
+    lastCareerTwinSourceSignature && sourceSignature !== lastCareerTwinSourceSignature
+  );
+  lastCareerTwinSourceSignature = sourceSignature;
   if (config.localPreview) localStorage.setItem(cacheKey(), JSON.stringify(state));
   const label = document.getElementById("saveState");
   if (label) label.textContent = session ? "Saving…" : "Local preview";
   if (session && cloudReady) {
-    saveQueue = saveQueue.then(persistCloudState).catch(async function(error) {
+    saveQueue = saveQueue.then(persistCloudState).then(function() {
+      if (twinSourcesChanged) scheduleCareerTwinRefresh();
+    }).catch(async function(error) {
       if (label) label.textContent = "Cloud save failed";
       toast(error.message || "Could not save to the cloud");
       await loadCloudState();
@@ -218,7 +366,7 @@ function saveState() {
 function emptyState() {
   return {
     profile: {
-      displayName: "", careerGoal: "", experienceLevel: "", country: "", onboardingComplete: false,
+      displayName: "", careerGoal: "", experienceLevel: "", country: "", guidanceLocale: "en", onboardingComplete: false,
       betaTermsAcceptedAt: "", privacyNoticeVersion: "",
       reminderSettings: { closing_days: 3, follow_up_days: 0, interview_hours: 24, include_plan_items: true },
       dismissedReminders: {}
@@ -235,7 +383,11 @@ function emptyState() {
     sharedReports: [],
     interviewSessions: [],
     interviewAnswers: [],
-    interviewGameProfile: { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] }
+    interviewVideoAssessments: [],
+    portfolioAssets: [],
+    careerCredentials: [],
+    interviewGameProfile: { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] },
+    careerOperatingSystem: emptyCareerOperatingSystem()
   };
 }
 
@@ -255,6 +407,9 @@ async function loadCloudState() {
     cloud.from("interview_practice_sessions").select("*").eq("user_id", userId).order("started_at", { ascending: false }).limit(30),
     cloud.from("interview_practice_answers").select("*").eq("user_id", userId).order("created_at"),
     cloud.from("interview_game_profiles").select("*").eq("user_id", userId).maybeSingle(),
+    cloud.from("interview_video_assessments").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(100),
+    cloud.from("portfolio_assets").select("*").eq("user_id", userId).order("updated_at", { ascending: false }).limit(100),
+    cloud.from("career_credentials").select("*").eq("user_id", userId).order("updated_at", { ascending: false }).limit(100),
     cloud.rpc("get_my_account_access")
   ]);
   results.forEach(function(result) { if (result.error) throw result.error; });
@@ -272,7 +427,8 @@ async function loadCloudState() {
           contactEmail: job.contact_email || "",
           sourceProvider: job.source_provider || "", externalJobId: job.external_job_id || "",
           employmentType: job.employment_type || "", workArrangement: job.work_arrangement || "",
-          salaryText: job.salary_text || "", importMetadata: job.import_metadata || {},
+          salaryText: job.salary_text || "", cvVersionLabel: job.cv_version_label || "",
+          importMetadata: job.import_metadata || {},
           normalizedSourceUrl: job.normalized_source_url || "",
           createdAt: job.created_at
         };
@@ -285,6 +441,7 @@ async function loadCloudState() {
       careerGoal: profile && profile.career_goal || "",
       experienceLevel: profile && profile.experience_level || "",
       country: profile && profile.country || "",
+      guidanceLocale: profile && profile.guidance_locale || "en",
       onboardingComplete: Boolean(profile && profile.onboarding_complete),
       betaTermsAcceptedAt: profile && profile.beta_terms_accepted_at || "",
       privacyNoticeVersion: profile && profile.privacy_notice_version || "",
@@ -305,10 +462,162 @@ async function loadCloudState() {
     sharedReports: results[9].data || [],
     interviewSessions: results[10].data || [],
     interviewAnswers: results[11].data || [],
-    interviewGameProfile: results[12].data || { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] }
+    interviewGameProfile: results[12].data || { total_xp: 0, current_streak: 0, longest_streak: 0, questions_answered: 0, sessions_completed: 0, badges: [] },
+    interviewVideoAssessments: results[13].data || [],
+    portfolioAssets: results[14].data || [],
+    careerCredentials: results[15].data || [],
+    careerOperatingSystem: emptyCareerOperatingSystem()
   };
-  accountAccess = results[13].data || accountAccess;
+  accountAccess = results[16].data || accountAccess;
   if (!selectedInterviewSessionId && state.interviewSessions[0]) selectedInterviewSessionId = state.interviewSessions[0].id;
+  await loadCareerOperatingSystem().catch(function() {
+    state.careerOperatingSystem = emptyCareerOperatingSystem();
+  });
+  lastCareerTwinSourceSignature = careerTwinSourceSignature(state);
+}
+
+function labourMarketFilterOptions(id, values, emptyLabel) {
+  const select = document.getElementById(id);
+  const selected = select.value;
+  const options = [...new Set(values.map(function(value) {
+    return String(value || "").trim();
+  }).filter(Boolean))].sort(function(left, right) { return left.localeCompare(right); });
+  select.innerHTML = '<option value="">' + safe(emptyLabel) + '</option>' + options.map(function(value) {
+    return '<option value="' + safe(value) + '">' + safe(value) + '</option>';
+  }).join("");
+  if (options.includes(selected)) select.value = selected;
+}
+
+function renderLabourMarketDashboard() {
+  const box = document.getElementById("labourMarketDashboard");
+  if (!box) return;
+  if (labourMarketState.loading) {
+    box.innerHTML = '<div class="empty-state"><strong>Loading sourced observations</strong><p>Preparing labour-market dimensions and coverage.</p></div>';
+    return;
+  }
+  if (labourMarketState.error) {
+    box.innerHTML = '<div class="empty-state"><strong>Labour-market signals unavailable</strong><p>' +
+      safe(labourMarketState.error) + '</p></div>';
+    return;
+  }
+  const rows = labourMarketState.observations;
+  labourMarketFilterOptions("labourMarketCountry", rows.map(function(item) { return item.country_code; }), "All countries");
+  labourMarketFilterOptions("labourMarketCity", rows.map(function(item) { return item.city; }), "All cities");
+  labourMarketFilterOptions("labourMarketIndustry", rows.map(function(item) { return item.industry; }), "All industries");
+  labourMarketFilterOptions("labourMarketJobFamily", rows.map(function(item) { return item.job_family; }), "All job families");
+  labourMarketFilterOptions("labourMarketExperience", rows.map(function(item) { return item.experience_level; }), "All levels");
+  const filters = {
+    country_code: document.getElementById("labourMarketCountry").value,
+    city: document.getElementById("labourMarketCity").value,
+    industry: document.getElementById("labourMarketIndustry").value,
+    job_family: document.getElementById("labourMarketJobFamily").value,
+    experience_level: document.getElementById("labourMarketExperience").value
+  };
+  const filtered = rows.filter(function(item) {
+    return Object.entries(filters).every(function(entry) {
+      return !entry[1] || item[entry[0]] === entry[1];
+    });
+  });
+  const newest = filtered.map(function(item) { return item.observed_to; }).filter(Boolean).sort().at(-1);
+  document.getElementById("labourMarketFreshness").textContent = filtered.length
+    ? filtered.length + " sourced observation" + (filtered.length === 1 ? "" : "s") +
+      (newest ? " · through " + newest : "")
+    : "No matching observations";
+  if (!filtered.length) {
+    box.innerHTML = '<div class="empty-state"><strong>No sourced signals match these filters</strong><p>Broaden one or more dimensions. Orynta does not estimate market conditions without published evidence.</p></div>';
+    return;
+  }
+  const groups = new Map();
+  filtered.forEach(function(item) {
+    const group = groups.get(item.signal_type) || [];
+    group.push(item);
+    groups.set(item.signal_type, group);
+  });
+  box.innerHTML = [...groups.entries()].map(function(entry) {
+    const observations = entry[1].sort(function(left, right) {
+      return String(right.observed_to).localeCompare(String(left.observed_to));
+    });
+    return '<section><div class="labour-market-group-head"><h4>' +
+      safe(entry[0].replaceAll("_", " ")) + '</h4><span>' + observations.length +
+      ' signal' + (observations.length === 1 ? "" : "s") + '</span></div>' +
+      observations.slice(0, 12).map(function(item) {
+        const value = item.range_low !== null && item.range_high !== null
+          ? (item.currency ? item.currency + " " : "") + Number(item.range_low).toLocaleString() +
+            "–" + Number(item.range_high).toLocaleString()
+          : item.value_numeric !== null ? Number(item.value_numeric).toLocaleString() +
+            (item.value_unit ? " " + item.value_unit : "") : "Qualitative signal";
+        return '<article><div><strong>' + safe(item.subject) + '</strong><span>' +
+          safe([item.country_code, item.city, item.industry, item.job_family, item.experience_level]
+            .filter(Boolean).join(" · ")) + '</span></div><div><strong>' + safe(value) +
+          '</strong><a href="' + safe(item.source_url) + '" target="_blank" rel="noopener noreferrer">' +
+          safe(item.source_name) + ' · ' + safe(item.observed_to) + '</a></div></article>';
+      }).join("") + '</section>';
+  }).join("");
+}
+
+async function loadLabourMarketDashboard() {
+  if (labourMarketState.loaded || labourMarketState.loading) {
+    renderLabourMarketDashboard();
+    return;
+  }
+  labourMarketState.loading = true;
+  renderLabourMarketDashboard();
+  if (!cloud || !session || config.localPreview) {
+    labourMarketState.loaded = true;
+    labourMarketState.loading = false;
+    renderLabourMarketDashboard();
+    return;
+  }
+  try {
+    const result = await cloud.from("labour_market_observations").select("*")
+      .eq("status", "published").order("observed_to", { ascending: false }).limit(1000);
+    if (result.error) throw result.error;
+    labourMarketState.observations = result.data || [];
+    labourMarketState.loaded = true;
+  } catch (error) {
+    labourMarketState.error = error.message || "Published market observations could not be loaded.";
+  } finally {
+    labourMarketState.loading = false;
+    renderLabourMarketDashboard();
+  }
+}
+
+async function loadCareerOperatingSystem() {
+  if (!cloud || !session || config.localPreview) return;
+  const results = await Promise.all([
+    cloud.rpc("get_career_operating_system_snapshot"),
+    cloud.from("career_graph_nodes")
+      .select("id,taxonomy_node_id,node_type,canonical_key,label,description,attributes,confidence,verification_status,source_type,source_id,updated_at")
+      .eq("user_id", session.user.id)
+      .order("updated_at", { ascending: false })
+      .limit(120),
+    cloud.from("career_graph_edges")
+      .select("id,from_node_id,to_node_id,relationship,weight,confidence,rationale,evidence_refs")
+      .eq("user_id", session.user.id)
+      .limit(240)
+  ]);
+  const error = results.find(function(result) { return result.error; });
+  if (error) throw error.error;
+  const snapshot = results[0].data || {};
+  skillGraphDetailCache.clear();
+  state.careerOperatingSystem = {
+    available: true,
+    twin: snapshot.twin || null,
+    graph: snapshot.graph || { node_count: 0, edge_count: 0, nodes_by_type: {} },
+    recommendations: Array.isArray(snapshot.recommendations) ? snapshot.recommendations : [],
+    nodes: results[1].data || [],
+    edges: results[2].data || [],
+    readiness: snapshot.readiness || null,
+    simulations: Array.isArray(snapshot.simulations) ? snapshot.simulations : [],
+    roadmaps: Array.isArray(snapshot.roadmaps) ? snapshot.roadmaps : [],
+    portfolio: snapshot.portfolio || { asset_count: 0, credential_count: 0, verified_credentials: 0 }
+  };
+  if (
+    selectedCareerGraphNodeId &&
+    !state.careerOperatingSystem.nodes.some(function(node) { return node.id === selectedCareerGraphNodeId; })
+  ) {
+    selectedCareerGraphNodeId = "";
+  }
 }
 
 async function deleteMissing(table, ids) {
@@ -341,7 +650,8 @@ async function persistCloudState() {
         contact_email: job.contactEmail || "",
         source_provider: job.sourceProvider || "", external_job_id: job.externalJobId || "",
         employment_type: job.employmentType || "", work_arrangement: job.workArrangement || "",
-        salary_text: job.salaryText || "", import_metadata: job.importMetadata || {},
+        salary_text: job.salaryText || "", cv_version_label: job.cvVersionLabel || "",
+        import_metadata: job.importMetadata || {},
         normalized_source_url: normalizeJobUrl(job.source),
         notes: job.notes || "",
         updated_at: new Date().toISOString()
@@ -360,6 +670,7 @@ async function persistCloudState() {
     cv_text: pendingState.cv.text || "", cv_uploaded_at: pendingState.cv.uploadedAt || null,
     display_name: pendingState.profile.displayName || "", career_goal: pendingState.profile.careerGoal || "",
     experience_level: pendingState.profile.experienceLevel || "", country: pendingState.profile.country || "",
+    guidance_locale: pendingState.profile.guidanceLocale || "en",
     onboarding_complete: Boolean(pendingState.profile.onboardingComplete),
     beta_terms_accepted_at: pendingState.profile.betaTermsAcceptedAt || null,
     privacy_notice_version: pendingState.profile.privacyNoticeVersion || null,
@@ -748,6 +1059,1114 @@ function renderNextAction(path) {
   }
 }
 
+function careerInsightList(items, emptyMessage, labelKey) {
+  if (!items.length) return '<div class="empty-state"><strong>' + safe(emptyMessage) + '</strong></div>';
+  return items.slice(0, 8).map(function(item) {
+    const label = item[labelKey] || item.skill || item.strength || "Career signal";
+    const detail = item.explanation || item.detail ||
+      (item.evidence_count ? item.evidence_count + " supporting evidence item" + (item.evidence_count === 1 ? "" : "s") : "");
+    const confidence = Math.max(0, Math.min(100, Math.round(Number(item.confidence || 0) * 100)));
+    return '<article class="twin-insight"><div><strong>' + safe(label) + '</strong>' +
+      (detail ? '<p>' + safe(detail) + '</p>' : "") +
+      '</div><span>' + confidence + '%</span></article>';
+  }).join("");
+}
+
+function graphNodePosition(index, count) {
+  const angle = count === 1 ? 0 : (Math.PI * 2 * index / count) - Math.PI / 2;
+  const ring = index % 3;
+  const radiusX = 31 + ring * 7;
+  const radiusY = 30 + ring * 6;
+  return {
+    x: 50 + Math.cos(angle) * radiusX,
+    y: 50 + Math.sin(angle) * radiusY
+  };
+}
+
+function renderCareerGraph(operatingSystem) {
+  const canvas = document.getElementById("careerGraphCanvas");
+  const details = document.getElementById("careerGraphDetails");
+  const filter = document.getElementById("careerGraphFilter");
+  const types = Object.keys(operatingSystem.graph.nodes_by_type || {}).sort();
+  const selectedFilter = careerGraphFilter;
+  filter.innerHTML = '<option value="all">All entities</option>' + types.map(function(type) {
+    return '<option value="' + safe(type) + '"' + (type === selectedFilter ? " selected" : "") + '>' +
+      safe(type.replaceAll("_", " ")) + '</option>';
+  }).join("");
+  const candidates = operatingSystem.nodes.filter(function(node) {
+    return careerGraphFilter === "all" || node.node_type === careerGraphFilter;
+  }).slice(0, 30);
+  if (!candidates.length) {
+    canvas.innerHTML = '<div class="empty-state"><strong>No graph entities yet</strong><p>Refresh the Career Twin after adding your profile, a target role, jobs, or evidence.</p></div>';
+    details.innerHTML = '<strong>Knowledge graph</strong><p>Your existing workspace data will be converted into connected career entities.</p>';
+    return;
+  }
+
+  const positions = new Map();
+  candidates.forEach(function(node, index) {
+    positions.set(node.id, graphNodePosition(index, candidates.length));
+  });
+  const visibleEdges = operatingSystem.edges.filter(function(edge) {
+    return positions.has(edge.from_node_id) && positions.has(edge.to_node_id);
+  });
+  const lines = visibleEdges.map(function(edge) {
+    const from = positions.get(edge.from_node_id);
+    const to = positions.get(edge.to_node_id);
+    return '<line x1="' + from.x + '%" y1="' + from.y + '%" x2="' + to.x + '%" y2="' + to.y +
+      '%" vector-effect="non-scaling-stroke"></line>';
+  }).join("");
+  const nodeButtons = candidates.map(function(node) {
+    const position = positions.get(node.id);
+    return '<button type="button" class="career-graph-node node-' + safe(node.node_type) +
+      (node.id === selectedCareerGraphNodeId ? " is-selected" : "") +
+      '" data-career-graph-node="' + safe(node.id) + '" style="left:' + position.x + '%;top:' + position.y +
+      '%"><span>' + safe(node.node_type.replaceAll("_", " ")) + '</span><strong>' + safe(node.label) + '</strong></button>';
+  }).join("");
+  canvas.innerHTML = '<svg class="career-graph-lines" aria-hidden="true">' + lines + '</svg>' + nodeButtons;
+  canvas.querySelectorAll("[data-career-graph-node]").forEach(function(button) {
+    button.addEventListener("click", function() {
+      selectedCareerGraphNodeId = button.dataset.careerGraphNode;
+      renderCareerGraph(state.careerOperatingSystem);
+      loadSkillGraphDetail(selectedCareerGraphNodeId);
+    });
+  });
+
+  const selected = operatingSystem.nodes.find(function(node) {
+    return node.id === selectedCareerGraphNodeId;
+  });
+  if (!selected) {
+    details.innerHTML = '<strong>Select a node</strong><p>Choose an entity to inspect its relationships and supporting evidence.</p>';
+    return;
+  }
+  const relationships = operatingSystem.edges.filter(function(edge) {
+    return edge.from_node_id === selected.id || edge.to_node_id === selected.id;
+  }).map(function(edge) {
+    const otherId = edge.from_node_id === selected.id ? edge.to_node_id : edge.from_node_id;
+    const other = operatingSystem.nodes.find(function(node) { return node.id === otherId; });
+    return {
+      direction: edge.from_node_id === selected.id ? "outgoing" : "incoming",
+      relationship: edge.relationship,
+      other: other,
+      rationale: edge.rationale,
+      evidenceCount: Array.isArray(edge.evidence_refs) ? edge.evidence_refs.length : 0
+    };
+  });
+  const expanded = skillGraphDetailCache.get(selected.id);
+  details.innerHTML = '<span class="graph-detail-type">' + safe(selected.node_type.replaceAll("_", " ")) +
+    '</span><h4>' + safe(selected.label) + '</h4>' +
+    (selected.description ? '<p>' + safe(selected.description.slice(0, 420)) + '</p>' : "") +
+    '<div class="graph-confidence"><span>AI confidence</span><strong>' +
+    Math.round(Number(selected.confidence || 0) * 100) + '%</strong><small>' +
+    safe(selected.verification_status || "observed") + '</small></div>' +
+    '<div class="graph-relationship-list">' + (relationships.length ? relationships.map(function(item) {
+      return '<article><strong>' + safe(item.relationship.replaceAll("_", " ")) + ' · ' +
+        safe(item.other && item.other.label || "Related entity") + '</strong><p>' +
+        safe(item.rationale || "Relationship derived from the user’s workspace.") +
+        '</p><span>' + item.evidenceCount + ' evidence reference' + (item.evidenceCount === 1 ? "" : "s") + '</span></article>';
+    }).join("") : '<p>No visible relationships for the current filter.</p>') + '</div>' +
+    skillGraphExpandedMarkup(selected, expanded);
+}
+
+function skillGraphExpandedMarkup(selected, detail) {
+  if (!["skill", "technology", "occupation"].includes(selected.node_type)) return "";
+  if (!detail) {
+    return '<div class="graph-detail-loading"><span class="spinner"></span> Loading taxonomy, market, learning, and evidence context…</div>';
+  }
+  if (detail.error) return '<p class="record-limitation">' + safe(detail.error) + '</p>';
+  const taxonomy = detail.taxonomy || {};
+  const demand = detail.market || [];
+  const related = detail.related || [];
+  const parents = detail.parents || [];
+  const children = detail.children || [];
+  const certifications = detail.certifications || [];
+  const resources = detail.resources || [];
+  const projects = detail.projects || [];
+  const jobs = detail.jobs || [];
+  const evidence = detail.evidence || [];
+  function chips(values, empty) {
+    return values.length ? '<div class="graph-detail-chips">' + values.map(function(item) {
+      return '<span>' + safe(item.label || item.title || item.name || item.subject || item) + '</span>';
+    }).join("") + '</div>' : '<p class="graph-detail-empty">' + safe(empty) + '</p>';
+  }
+  return '<div class="skill-explorer-sections">' +
+    '<section><strong>Description</strong><p>' + safe(taxonomy.description || selected.description || "No public taxonomy description is connected.") +
+    '</p><small>' + safe(taxonomy.taxonomy ? taxonomy.taxonomy.toUpperCase() + " · " + taxonomy.external_id : "User graph entity") +
+    '</small></section><section><strong>Market demand</strong>' +
+    (demand.length ? demand.map(function(signal) {
+      return '<article class="skill-market-signal"><div><span>' + safe(signal.country_code) + '</span><strong>' +
+        safe(signal.subject) + '</strong></div><p>' + safe(signal.value_numeric === null ? "Observed" : signal.value_numeric) +
+        ' ' + safe(signal.value_unit || "") + ' · confidence ' +
+        Math.round(Number(signal.confidence || 0) * 100) + '%</p><a href="' +
+        safe(signal.source_url) + '" target="_blank" rel="noopener noreferrer">' + safe(signal.source_name) + ' · ' +
+        safe(signal.observed_to) + '</a></article>';
+    }).join("") : '<p class="graph-detail-empty">No sourced market observation matches this entity.</p>') +
+    '</section><section><strong>Related skills</strong>' + chips(related, "No related taxonomy skills loaded.") +
+    '</section><section><strong>Parent skills</strong>' + chips(parents, "No broader skill is linked.") +
+    '</section><section><strong>Child skills</strong>' + chips(children, "No narrower skill is linked.") +
+    '</section><section><strong>Learning resources</strong>' +
+    (resources.length ? resources.map(function(resource) {
+      return '<a href="' + safe(resource.url) + '" target="_blank" rel="noopener noreferrer">' + safe(resource.title) + '</a>';
+    }).join("") : '<p class="graph-detail-empty">No reviewed learning resource is connected.</p>') +
+    '</section><section><strong>Certifications</strong>' + chips(certifications, "No connected certification.") +
+    '</section><section><strong>Projects</strong>' + chips(projects, "No analysed project demonstrates this skill.") +
+    '</section><section><strong>Saved jobs requiring it</strong>' + chips(jobs, "No exact saved-job requirement.") +
+    '</section><section><strong>User evidence</strong>' + chips(evidence, "No direct evidence item.") +
+    '</section></div>';
+}
+
+async function loadSkillGraphDetail(nodeId) {
+  const node = state.careerOperatingSystem.nodes.find(function(item) { return item.id === nodeId; });
+  if (!node || !["skill", "technology", "occupation"].includes(node.node_type) || skillGraphDetailCache.has(nodeId)) return;
+  if (!cloud || !session || config.localPreview) {
+    skillGraphDetailCache.set(nodeId, { error: "Connected taxonomy and market detail requires the v2 backend." });
+    renderCareerGraph(state.careerOperatingSystem);
+    return;
+  }
+  try {
+    let taxonomy = null;
+    let edges = [];
+    let neighbours = [];
+    if (node.taxonomy_node_id) {
+      const [taxonomyResult, edgeResult] = await Promise.all([
+        cloud.from("career_taxonomy_nodes").select("*").eq("id", node.taxonomy_node_id).maybeSingle(),
+        cloud.from("career_taxonomy_edges").select("*")
+          .or("from_node_id.eq." + node.taxonomy_node_id + ",to_node_id.eq." + node.taxonomy_node_id)
+          .limit(100)
+      ]);
+      if (taxonomyResult.error) throw taxonomyResult.error;
+      if (edgeResult.error) throw edgeResult.error;
+      taxonomy = taxonomyResult.data;
+      edges = edgeResult.data || [];
+      const ids = [...new Set(edges.flatMap(function(edge) { return [edge.from_node_id, edge.to_node_id]; }))]
+        .filter(function(id) { return id !== node.taxonomy_node_id; });
+      if (ids.length) {
+        const neighbourResult = await cloud.from("career_taxonomy_nodes").select("*").in("id", ids);
+        if (neighbourResult.error) throw neighbourResult.error;
+        neighbours = neighbourResult.data || [];
+      }
+    }
+    const term = String(node.label || "").replace(/[%_,()]/g, "").trim();
+    let marketQuery = cloud.from("labour_market_observations").select("*")
+      .eq("status", "published").order("observed_to", { ascending: false }).limit(30);
+    if (term) marketQuery = marketQuery.or("subject.ilike.%" + term + "%,job_family.ilike.%" + term + "%");
+    const [marketResult, portfolioResult, credentialResult] = await Promise.all([
+      marketQuery,
+      cloud.from("portfolio_assets").select("id,title,url,technologies,analysis,analysed_at")
+        .eq("user_id", session.user.id).contains("technologies", [node.label]).limit(30),
+      cloud.from("career_credentials").select("id,name,issuer,skills,verification_status,credential_url")
+        .eq("user_id", session.user.id).contains("skills", [node.label]).limit(30)
+    ]);
+    if (marketResult.error) throw marketResult.error;
+    if (portfolioResult.error) throw portfolioResult.error;
+    if (credentialResult.error) throw credentialResult.error;
+    const byId = new Map(neighbours.map(function(item) { return [item.id, item]; }));
+    function linked(relationship, direction) {
+      return edges.flatMap(function(edge) {
+        const matches = edge.relationship === relationship && (
+          direction === "out" ? edge.from_node_id === node.taxonomy_node_id :
+          direction === "in" ? edge.to_node_id === node.taxonomy_node_id : true
+        );
+        if (!matches) return [];
+        return [byId.get(edge.from_node_id === node.taxonomy_node_id ? edge.to_node_id : edge.from_node_id)].filter(Boolean);
+      });
+    }
+    const recommendation = state.careerOperatingSystem.recommendations.find(function(item) {
+      return String(item.title || "").toLowerCase().includes(String(node.label || "").toLowerCase());
+    });
+    const taxonomyCertifications = neighbours.filter(function(item) {
+      return ["certification", "course"].includes(item.node_type);
+    });
+    const jobs = state.paths.flatMap(function(path) { return path.jobs; }).filter(function(job) {
+      return [job.title, job.description].some(function(value) {
+        return String(value || "").toLowerCase().includes(String(node.label || "").toLowerCase());
+      });
+    });
+    const evidence = state.knowledge.filter(function(item) {
+      return String(item.skill || "").toLowerCase() === String(node.label || "").toLowerCase();
+    });
+    skillGraphDetailCache.set(nodeId, {
+      taxonomy,
+      market: marketResult.data || [],
+      related: [...linked("related", "any"), ...linked("supports", "any")],
+      parents: [...linked("broader", "out"), ...linked("narrower", "in")],
+      children: [...linked("narrower", "out"), ...linked("broader", "in")],
+      resources: (recommendation && recommendation.rationale && recommendation.rationale.learning_resources) || [],
+      certifications: [...taxonomyCertifications, ...(credentialResult.data || [])],
+      projects: portfolioResult.data || [],
+      jobs,
+      evidence
+    });
+  } catch (error) {
+    skillGraphDetailCache.set(nodeId, { error: error.message || "Skill context could not be loaded." });
+  }
+  if (selectedCareerGraphNodeId === nodeId) renderCareerGraph(state.careerOperatingSystem);
+}
+
+function renderCareerRecommendations(operatingSystem) {
+  const container = document.getElementById("careerRecommendationList");
+  const arabic = state.profile.guidanceLocale === "ar";
+  container.classList.toggle("guidance-ar", arabic);
+  container.dir = arabic ? "rtl" : "ltr";
+  if (!operatingSystem.recommendations.length) {
+    container.innerHTML = '<div class="empty-state"><strong>No active recommendations yet</strong><p>Run a cited career analysis, then refresh your Career Twin.</p></div>';
+    return;
+  }
+  container.innerHTML = operatingSystem.recommendations.map(function(item) {
+    const localized = item.localized && item.localized[arabic ? "ar" : "en"] || {};
+    const rationale = item.rationale || {};
+    const impact = item.impact || {};
+    const effort = item.effort || {};
+    const jobs = Array.isArray(rationale.required_by_saved_jobs) ? rationale.required_by_saved_jobs : [];
+    const support = Array.isArray(rationale.supporting_strengths) ? rationale.supporting_strengths : [];
+    const companies = Array.isArray(rationale.companies_that_value_it) ? rationale.companies_that_value_it : [];
+    const certifications = Array.isArray(rationale.certifications_that_validate_it) ? rationale.certifications_that_validate_it : [];
+    const relatedSkills = Array.isArray(rationale.related_taxonomy_skills) ? rationale.related_taxonomy_skills : [];
+    const marketSignals = Array.isArray(rationale.market_signals) ? rationale.market_signals : [];
+    const portfolioEvidence = Array.isArray(rationale.portfolio_evidence) ? rationale.portfolio_evidence : [];
+    const refs = Array.isArray(item.evidence_refs) ? item.evidence_refs : [];
+    return '<article class="career-recommendation"><div class="career-recommendation-head"><div><span>' +
+      safe(item.recommendation_type || "career") + '</span><h4>' + safe(localized.title || item.title) + '</h4></div><strong>' +
+      Math.round(Number(item.confidence || 0) * 100) + (arabic ? '% ثقة' : '% confidence') +
+      '</strong></div><p>' + safe(localized.summary || item.summary) +
+      '</p><div class="recommendation-facts"><span>' + Number(impact.saved_jobs_addressed || 0) +
+      ' saved jobs</span><span>' + Number(impact.companies_addressed || 0) + ' companies</span><span>' +
+      '+' + Number(impact.estimated_match_score_delta || 0) + ' directional match points</span><span>' +
+      safe(effort.relative || "unscored") + ' relative effort</span></div><details><summary>View reasoning and evidence</summary>' +
+      '<div class="recommendation-reasoning"><div><strong>' + (arabic ? "لماذا" : "Why") +
+      '</strong><p>' + safe(arabic ? rationale.why_ar || localized.summary : rationale.why || item.summary) +
+      '</p></div><div><strong>Jobs requiring it</strong><p>' +
+      safe(jobs.length ? jobs.map(function(job) { return job.title + (job.company ? " · " + job.company : ""); }).join(", ") : "No exact saved-job text match.") +
+      '</p></div><div><strong>Existing strengths that support it</strong><p>' +
+      safe(support.length ? support.map(function(strength) { return strength.skill; }).join(", ") : "No directly related strength identified yet.") +
+      '</p></div><div><strong>Companies represented</strong><p>' +
+      safe(companies.length ? companies.join(", ") : "No company-specific signal yet.") +
+      '</p></div><div><strong>Certifications that can validate it</strong><p>' +
+      safe(certifications.length ? certifications.map(function(certification) {
+        return certification.name + (certification.verification_status === "verified" ? " · verified" : "");
+      }).join(", ") : "No connected credential or taxonomy certification.") +
+      '</p></div><div><strong>Related public-taxonomy skills</strong><p>' +
+      safe(relatedSkills.length ? relatedSkills.map(function(skill) { return skill.label; }).join(", ") : "No related public-taxonomy skill.") +
+      '</p></div><div><strong>Sourced market signals</strong><p>' +
+      (marketSignals.length ? marketSignals.map(function(signal) {
+        return '<a href="' + safe(signal.source_url) + '" target="_blank" rel="noopener noreferrer">' +
+          safe(signal.subject || signal.signal_type) + ' · ' + safe(signal.country_code) + ' · through ' +
+          safe(signal.observed_to) + '</a>';
+      }).join("<br>") : "No matching sourced market signal.") +
+      '</p></div><div><strong>Portfolio evidence</strong><p>' +
+      safe(portfolioEvidence.length ? portfolioEvidence.map(function(project) {
+        return project.title + (project.overall_score === null ? "" : " · " + project.overall_score + "/100");
+      }).join(", ") : "No analysed project currently demonstrates this skill.") +
+      '</p></div><div><strong>Evidence chain</strong><p>' + refs.length + ' structured reference' +
+      (refs.length === 1 ? "" : "s") + '</p></div><div><strong>Limits</strong><p>' +
+      safe(arabic
+        ? rationale.limitations_ar || "يعتمد هذا التوجيه على الأدلة المتصلة حالياً."
+        : rationale.limitations || "This recommendation only uses currently connected evidence.") +
+      '</p></div></div></details></article>';
+  }).join("");
+}
+
+function renderCareerPlanning(operatingSystem) {
+  const arabic = state.profile.guidanceLocale === "ar";
+  const readiness = operatingSystem.readiness;
+  const score = document.getElementById("careerReadinessScore");
+  score.textContent = readiness
+    ? Math.round(Number(readiness.overall_score || 0)) + (arabic ? "% جاهزية" : "% ready")
+    : (arabic ? "لم يتم التقييم" : "Not assessed");
+  const categories = readiness && readiness.categories || {};
+  const categoryEntries = Object.entries(categories).sort(function(left, right) {
+    return Number(left[1].score || 0) - Number(right[1].score || 0);
+  });
+  document.getElementById("careerReadinessCategories").innerHTML = categoryEntries.length
+    ? categoryEntries.map(function(entry) {
+      const categoryLabelsAr = {
+        technical_readiness: "الجاهزية التقنية",
+        portfolio_quality: "جودة ملف الأعمال",
+        communication: "التواصل",
+        leadership: "القيادة",
+        certifications: "الشهادات",
+        experience: "الخبرة",
+        evidence_strength: "قوة الأدلة",
+        project_quality: "جودة المشاريع",
+        interview_readiness: "الاستعداد للمقابلات",
+        market_competitiveness: "التنافسية في السوق"
+      };
+      const label = arabic ? categoryLabelsAr[entry[0]] || entry[0].replaceAll("_", " ") : entry[0].replaceAll("_", " ");
+      const value = entry[1] || {};
+      return '<article><div><strong>' + safe(label) + '</strong><span>' +
+        Math.round(Number(value.score || 0)) + '%</span></div><div class="meter-track"><span style="width:' +
+        Math.round(Number(value.score || 0)) + '%"></span></div><p>' + safe(value.explanation || "") + '</p></article>';
+    }).join("")
+    : '<div class="empty-state"><strong>No readiness assessment yet</strong><p>Run a simulation to assess ten evidence-based readiness categories.</p></div>';
+
+  const simulation = operatingSystem.simulations && operatingSystem.simulations[0];
+  const result = document.getElementById("careerSimulationResult");
+  if (!simulation) {
+    result.innerHTML = '<div class="empty-state"><strong>No scenario modelled yet</strong><p>Choose a possible next move to create a transparent projection and weekly roadmap.</p></div>';
+    return;
+  }
+  const scenario = simulation.scenario || {};
+  const projection = simulation.projection || {};
+  const match = projection.match_score || {};
+  const salary = projection.salary || {};
+  const hiring = projection.hiring_probability || {};
+  const mobility = projection.mobility || {};
+  const transition = projection.time_to_transition || {};
+  const effort = projection.required_effort || {};
+  const roles = Array.isArray(projection.new_eligible_roles) ? projection.new_eligible_roles : [];
+  const roadmap = Array.isArray(simulation.roadmap) ? simulation.roadmap : [];
+  const assumptions = Array.isArray(simulation.assumptions) ? simulation.assumptions : [];
+  const roadmaps = Array.isArray(operatingSystem.roadmaps) ? operatingSystem.roadmaps : [];
+  result.classList.toggle("guidance-ar", arabic);
+  result.setAttribute("dir", arabic ? "rtl" : "ltr");
+  result.innerHTML = '<div class="simulation-heading"><div><p class="eyebrow">' +
+    (arabic ? "أحدث سيناريو" : "Latest scenario") + '</p><h4>' +
+    safe(scenario.subject || simulation.scenario_type) + '</h4></div><strong>' +
+    Math.round(Number(simulation.confidence || 0) * 100) + (arabic ? '% ثقة' : '% confidence') + '</strong></div>' +
+    '<div class="simulation-metrics"><article><span>' + (arabic ? "التوافق الاتجاهي" : "Directional match") + '</span><strong>' +
+    Math.round(Number(match.projected || 0)) + '%</strong><small>+' + Math.round(Number(match.delta || 0)) +
+    (arabic ? " نقاط" : " points") + '</small></article><article><span>' +
+    (arabic ? "الانتقال المتوقع" : "Estimated transition") + '</span><strong>' +
+    (transition.estimated_weeks ? transition.estimated_weeks + (arabic ? " أسابيع" : " weeks") : (arabic ? "غير معروف" : "Unknown")) +
+    '</strong><small>' + safe(effort.relative || (arabic ? "غير مصنف" : "unscored")) +
+    (arabic ? " جهد" : " effort") + '</small></article><article><span>' +
+    (arabic ? "دليل الراتب" : "Salary evidence") + '</span><strong>' +
+    (salary.available ? safe(salary.currency) + " " + Number(salary.range_low).toLocaleString() + "–" +
+      Number(salary.range_high).toLocaleString() : "Unavailable") +
+    '</strong><small>' + (salary.available ? (salary.sources || []).length + " cited source" +
+      ((salary.sources || []).length === 1 ? "" : "s") : safe(salary.reason || "No matching observation")) +
+    '</small></article><article><span>' + (arabic ? "الأدوار المحفوظة المؤهلة" : "Eligible saved roles") +
+    '</span><strong>' + roles.length + '</strong><small>' +
+    (arabic ? "تطابقات دقيقة مع المتطلبات" : "exact requirement matches") + '</small></article></div>' +
+    (salary.available && salary.cost_of_living
+      ? '<div class="simulation-evidence-note"><strong>Cost-of-living adjustment</strong><p>' +
+        safe(salary.cost_of_living.currency || salary.currency || "") +
+        Number(salary.cost_of_living.adjusted_range_low || 0).toLocaleString() + "–" +
+        Number(salary.cost_of_living.adjusted_range_high || 0).toLocaleString() + " · " +
+        safe(salary.cost_of_living.explanation || "") + '</p></div>'
+      : "") +
+    '<div class="simulation-evidence-note"><strong>' +
+    (arabic ? "تقدير النتيجة التاريخية" : "Historical outcome estimate") + '</strong><p>' +
+    (hiring.available
+      ? (arabic ? "معدل العروض المرصود للحالات المشابهة: " : "Observed offer rate for comparable outcomes: ") +
+        Number(hiring.estimate_percent).toLocaleString() + '% · 95% ' +
+        Number(hiring.confidence_interval_95.low).toLocaleString() + '–' +
+        Number(hiring.confidence_interval_95.high).toLocaleString() + '% · ' +
+        Number(hiring.comparable_outcomes).toLocaleString() +
+        (arabic ? " نتيجة نهائية. " : " terminal outcomes. ") + safe(hiring.limitations)
+      : safe(hiring.reason || "Insufficient comparable terminal outcomes.")) +
+    '</p></div>' +
+    salaryIntelligenceMarkup(salary) +
+    mobilityProjectionMarkup(mobility) +
+    '<div class="simulation-roadmap"><h4>' + (arabic ? "خارطة طريق تفاعلية" : "Interactive roadmap") + '</h4>' +
+    (roadmap.length ? roadmap.map(function(item) {
+      return '<article><span>' + Number(item.sequence || 0) + '</span><div><strong>' +
+        safe(arabic ? item.title_ar || item.title : item.title) + '</strong><p>' +
+        Number(item.estimated_hours || 0) + (arabic ? " ساعة · " : " hours · ") +
+        safe(arabic
+          ? item.verification_criteria_ar || item.verification_criteria
+          : item.verification_criteria || "Verification required") + '</p></div></article>';
+    }).join("") : '<p>' + (arabic ? "لم يتم إنشاء خارطة طريق." : "No roadmap generated.") +
+    '</p>') + '</div><details><summary>' + (arabic ? "الافتراضات والقيود" : "Assumptions and limits") + '</summary><ul>' +
+    assumptions.map(function(item) { return '<li>' + safe(item) + '</li>'; }).join("") +
+    '<li>' + safe(hiring.available
+      ? "The historical offer-rate estimate is not adjusted upward for this scenario and does not predict an employer decision."
+      : "Hiring probability remains unavailable until the minimum comparable-outcome threshold is met.") +
+    '</li></ul></details>' +
+    roadmapManagementMarkup(roadmaps);
+  bindRoadmapControls();
+}
+
+function salaryIntelligenceMarkup(salary) {
+  const arabic = state.profile.guidanceLocale === "ar";
+  const regions = Array.isArray(salary.regional_comparisons) ? salary.regional_comparisons : [];
+  const progression = Array.isArray(salary.career_progression) ? salary.career_progression : [];
+  const premium = salary.skill_premium || {};
+  const certification = salary.certification_impact || {};
+  if (!salary.available && !regions.length && !progression.length) return "";
+  function range(item) {
+    return safe(item.currency || salary.currency || "") + " " +
+      Number(item.range_low || 0).toLocaleString() + "–" +
+      Number(item.range_high || 0).toLocaleString();
+  }
+  return '<section class="salary-intelligence' + (arabic ? " guidance-ar" : "") +
+    '" dir="' + (arabic ? "rtl" : "ltr") + '"><div class="simulation-heading"><div><p class="eyebrow">' +
+    (arabic ? "ذكاء الرواتب" : "Salary intelligence") + '</p><h4>' +
+    (arabic ? "المقارنة والتقدم والأثر" : "Comparison, progression, and impact") +
+    '</h4></div><span>' + (arabic ? "تقديرات اتجاهية من مصادر مؤرخة" : "Directional estimates from dated sources") +
+    '</span></div><div class="salary-intelligence-grid"><article><h5>' +
+    (arabic ? "مقارنة إقليمية" : "Regional comparison") + '</h5>' +
+    (regions.length ? regions.slice(0, 6).map(function(item) {
+      return '<div><span>' + safe([item.country_code, item.city].filter(Boolean).join(" · ")) +
+        '</span><strong>' + range(item) + '</strong></div>';
+    }).join("") : '<p>' + (arabic ? "لا توجد مناطق قابلة للمقارنة." : "No comparable regions available.") +
+    '</p>') + '</article><article><h5>' + (arabic ? "التقدم المهني" : "Career progression") + '</h5>' +
+    (progression.length ? progression.map(function(item) {
+      return '<div><span>' + safe(item.experience_level) + '</span><strong>' + range(item) + '</strong></div>';
+    }).join("") : '<p>' + (arabic ? "لا توجد مستويات خبرة قابلة للمقارنة." : "No comparable experience levels available.") +
+    '</p>') + '</article><article><h5>' + (arabic ? "علاوة المهارة" : "Skill premium") + '</h5>' +
+    (premium.available
+      ? '<strong>' + (premium.amount >= 0 ? "+" : "") + safe(premium.currency) + " " +
+        Number(premium.amount).toLocaleString() + ' · ' + (premium.percent >= 0 ? "+" : "") +
+        Number(premium.percent) + '%</strong><p>' + safe(premium.basis) + '</p>'
+      : '<p>' + safe(premium.reason || "No comparable baseline.") + '</p>') +
+    '</article><article><h5>' + (arabic ? "أثر الشهادة" : "Certification impact") + '</h5>' +
+    (certification.available
+      ? '<strong>' + (certification.amount >= 0 ? "+" : "") + safe(certification.currency) + " " +
+        Number(certification.amount).toLocaleString() + '</strong><p>' + safe(certification.basis) + '</p>'
+      : '<p>' + safe(certification.reason || "Not applicable to this scenario.") + '</p>') +
+    '</article></div><p class="record-limitation">' +
+    (arabic
+      ? "لا تثبت الفروق المرصودة علاقة سببية ولا تضمن راتباً فردياً. راجع المصادر والتغطية الزمنية."
+      : "Observed differences do not establish causation or guarantee an individual salary. Review the sources and coverage windows.") +
+    '</p></section>';
+}
+
+function mobilityProjectionMarkup(mobility) {
+  if (!mobility.available) return "";
+  const arabic = state.profile.guidanceLocale === "ar";
+  const visa = mobility.visa_considerations || {};
+  const language = mobility.language_requirements || {};
+  const demand = mobility.market_demand || {};
+  const certifications = Array.isArray(mobility.recommended_certifications) ? mobility.recommended_certifications : [];
+  const gaps = Array.isArray(mobility.missing_competencies) ? mobility.missing_competencies : [];
+  const sources = Array.isArray(mobility.official_sources) ? mobility.official_sources : [];
+  return '<section class="mobility-projection' + (arabic ? " guidance-ar" : "") + '" dir="' +
+    (arabic ? "rtl" : "ltr") + '"><div class="simulation-heading"><div><p class="eyebrow">' +
+    (arabic ? "مخطط التنقل المهني" : "Mobility planner") + '</p><h4>' +
+    safe(arabic ? mobility.country_name_ar || mobility.country_name : mobility.country_name) +
+    '</h4></div><strong>' + Math.round(Number(mobility.skill_readiness && mobility.skill_readiness.score || 0)) +
+    (arabic ? "% جاهزية المهارات" : "% skill readiness") +
+    '</strong></div><div class="mobility-grid"><article><h5>' +
+    (arabic ? "اعتبارات التأشيرة" : "Visa considerations") + '</h5><p>' +
+    safe(arabic ? visa.summary_ar || visa.summary : visa.summary || "") + '</p><ul>' +
+    (arabic ? [] : visa.checkpoints || []).map(function(item) {
+      return '<li>' + safe(item) + '</li>';
+    }).join("") + '</ul></article><article><h5>' + (arabic ? "اللغة" : "Language") + '</h5><p>' +
+    safe(arabic ? language.workplace_ar || language.workplace : language.workplace || "") + '</p><p>' +
+    safe(arabic ? language.legal_ar || language.legal : language.legal || "") + '</p><small>' +
+    safe(arabic ? language.recommended_ar || language.recommended : language.recommended || "") +
+    '</small></article><article><h5>' + (arabic ? "طلب السوق" : "Market demand") + '</h5><strong>' +
+    (demand.available
+      ? Number(demand.matching_signals || 0) + (arabic ? " ملاحظات مطابقة" : " matching observations")
+      : (arabic ? "لا توجد بيانات مصدرية مطابقة" : "No matching sourced data")) +
+    '</strong><p>' + safe(demand.reason || "Open the evidence links in your simulation to inspect source dates and methodology.") +
+    '</p></article><article><h5>' + (arabic ? "الدليل التالي" : "Next evidence") + '</h5><p>' +
+    safe(certifications.length
+      ? certifications.join(" · ")
+      : (arabic ? "لم يتم تأكيد اعتماد خاص بالوجهة." : "No destination-specific credential is asserted.")) +
+    '</p><small>' + safe(gaps.length
+      ? (arabic ? "الفجوات المتبقية في التوأم المهني: " : "Remaining Career Twin gaps: ") + gaps.slice(0, 5).join(", ")
+      : (arabic ? "لا توجد فجوات منظمة مسجلة حالياً." : "No structured gaps currently recorded.")) +
+    '</small></article></div><div class="mobility-sources"><strong>' +
+    (arabic ? "إرشاد رسمي · تمت المراجعة " : "Official guidance · reviewed ") +
+    safe(mobility.reviewed_on || "date unavailable") + '</strong>' + sources.map(function(source) {
+      return '<a href="' + safe(source.url) + '" target="_blank" rel="noopener noreferrer">' +
+        safe(source.title) + '</a>';
+    }).join("") + '</div><p class="record-limitation">' +
+    safe(arabic ? mobility.limitations_ar || mobility.limitations : mobility.limitations || "") + '</p></section>';
+}
+
+function roadmapManagementMarkup(roadmaps) {
+  if (!roadmaps.length) return "";
+  const arabic = state.profile.guidanceLocale === "ar";
+  const statusLabelsAr = {
+    not_started: "لم يبدأ",
+    in_progress: "قيد التنفيذ",
+    completed: "مكتمل",
+    skipped: "تم التخطي"
+  };
+  return '<section class="roadmap-management' + (arabic ? " guidance-ar" : "") + '" dir="' +
+    (arabic ? "rtl" : "ltr") + '"><div class="simulation-heading"><div><p class="eyebrow">' +
+    (arabic ? "خارطة التعلم الشخصية" : "Personal learning roadmap") + '</p><h4>' +
+    (arabic ? "التقدم الأسبوعي" : "Weekly progress") + '</h4></div><span>' +
+    (arabic ? "تتكيّف التوقعات مع تغير المعالم" : "Forecasts adapt as milestones change") + '</span></div>' +
+    roadmaps.map(function(roadmap) {
+      const milestones = Array.isArray(roadmap.milestones) ? roadmap.milestones : [];
+      const roadmapSalary = roadmap.salary_projection || {};
+      const salarySummary = roadmapSalary.available
+        ? safe(roadmapSalary.currency || "") + " " +
+          Number(roadmapSalary.range_low || 0).toLocaleString() + "–" +
+          Number(roadmapSalary.range_high || 0).toLocaleString()
+        : "";
+      return '<article class="managed-roadmap"><div class="managed-roadmap-head"><div><strong>' +
+        safe(arabic ? roadmap.title_ar || roadmap.title : roadmap.title) + '</strong><p>' +
+        safe(arabic ? roadmap.goal_ar || roadmap.goal : roadmap.goal) + '</p></div><div><strong>' +
+        Math.round(Number(roadmap.progress_percent || 0)) + '%</strong><span>' +
+        (roadmap.forecast_completion
+          ? (arabic ? "الإكمال المتوقع " : "Forecast ") + formatDate(roadmap.forecast_completion)
+          : (arabic ? "التوقع غير متاح" : "Forecast unavailable")) +
+        '</span></div></div>' + (salarySummary
+        ? '<div class="roadmap-salary"><span>' + (arabic ? "توقع الراتب" : "Salary projection") +
+          '</span><strong>' + salarySummary + '</strong><small>' +
+          (arabic ? "تقدير اتجاهي من مصادر مؤرخة" : "Directional estimate from dated sources") + '</small></div>'
+        : "") + '<div class="meter-track"><span style="width:' +
+        Math.round(Number(roadmap.progress_percent || 0)) + '%"></span></div><div class="managed-milestones">' +
+        milestones.map(function(milestone) {
+          const resources = Array.isArray(milestone.resources) ? milestone.resources : [];
+          return '<article class="managed-milestone ' + (milestone.status === "completed" ? "is-complete" : "") +
+            '"><div><span>' + Number(milestone.sequence || 0) + '</span><div><strong>' +
+            safe(arabic ? milestone.title_ar || milestone.title : milestone.title) + '</strong><p>' +
+            Number(milestone.estimated_hours || 0) + (arabic ? " ساعة · " : " hours · ") +
+            safe(arabic
+              ? milestone.verification_criteria_ar || milestone.verification_criteria
+              : milestone.verification_criteria || "") + '</p><div class="milestone-resources">' +
+            resources.map(function(resource) {
+              return resource.url
+                ? '<a href="' + safe(resource.url) + '" target="_blank" rel="noopener noreferrer">' + safe(resource.title) + '</a>'
+                : '<span>' + safe(resource.title) + '</span>';
+            }).join("") + '</div></div></div><select class="input compact-input" data-roadmap-milestone="' +
+            safe(milestone.id) + '" aria-label="Status for ' + safe(milestone.title) + '">' +
+            ["not_started", "in_progress", "completed", "skipped"].map(function(status) {
+              return '<option value="' + status + '"' + (milestone.status === status ? " selected" : "") + '>' +
+                (arabic ? statusLabelsAr[status] : status.replaceAll("_", " ")) + '</option>';
+            }).join("") + '</select></article>';
+        }).join("") + '</div></article>';
+    }).join("") + '</section>';
+}
+
+function bindRoadmapControls() {
+  document.querySelectorAll("[data-roadmap-milestone]").forEach(function(select) {
+    select.addEventListener("change", async function() {
+      const previous = state.careerOperatingSystem.roadmaps
+        .flatMap(function(roadmap) { return roadmap.milestones || []; })
+        .find(function(milestone) { return milestone.id === select.dataset.roadmapMilestone; });
+      select.disabled = true;
+      try {
+        const result = await cloud.rpc("set_learning_milestone_status", {
+          p_milestone_id: select.dataset.roadmapMilestone,
+          p_status: select.value
+        });
+        if (result.error) throw result.error;
+        state.careerOperatingSystem.roadmaps = state.careerOperatingSystem.roadmaps
+          .filter(function(roadmap) { return roadmap.id !== result.data.id; });
+        if (result.data.status !== "completed" && result.data.status !== "archived") {
+          state.careerOperatingSystem.roadmaps.unshift(result.data);
+        }
+        renderCareerPlanning(state.careerOperatingSystem);
+        toast(select.value === "completed" ? "Milestone completed and forecast updated" : "Roadmap forecast updated");
+      } catch (error) {
+        if (previous) select.value = previous.status;
+        select.disabled = false;
+        toast(error.message || "The milestone could not be updated.");
+      }
+    });
+  });
+}
+
+function institutionMetric(label, value, foot) {
+  return '<article class="stat-block"><span class="stat-label">' + safe(label) + '</span><strong>' +
+    safe(value === null || value === undefined ? "—" : value) + '</strong><span class="stat-foot">' +
+    safe(foot) + '</span></article>';
+}
+
+function distributionRows(items, labelKey, valueKey, emptyCopy) {
+  if (!Array.isArray(items) || !items.length) return '<div class="empty-state">' + safe(emptyCopy) + '</div>';
+  const maximum = Math.max(...items.map(function(item) { return Number(item[valueKey] || 0); }), 1);
+  return items.map(function(item) {
+    const value = Number(item[valueKey] || 0);
+    return '<article class="institution-distribution-row"><div><strong>' + safe(item[labelKey]) +
+      '</strong><span>' + value + ' learner' + (value === 1 ? "" : "s") +
+      '</span></div><div class="meter-track"><span style="width:' + Math.round(value / maximum * 100) +
+      '%"></span></div></article>';
+  }).join("");
+}
+
+function renderInstitutionDashboard() {
+  const organizationSelect = document.getElementById("institutionOrganizationSelect");
+  const cohortSelect = document.getElementById("institutionCohortSelect");
+  const status = document.getElementById("institutionStatus");
+  const content = document.getElementById("institutionDashboardContent");
+  const consentList = document.getElementById("institutionConsentList");
+  const memberships = institutionState.memberships || [];
+  const consents = institutionState.consents || [];
+  consentList.innerHTML = consents.length ? consents.map(function(item) {
+    const organization = item.organization || {};
+    const consent = item.consent || {};
+    const active = consent.status === "active" &&
+      Array.isArray(consent.scopes) && consent.scopes.includes("cohort_analytics");
+    const cohortNames = (item.cohorts || []).map(function(cohort) { return cohort.name; }).join(", ");
+    return '<article class="institution-consent-row"><div><strong>' + safe(organization.name || "Organization") +
+      '</strong><span>' + safe(cohortNames || "Organization membership") +
+      '</span><small>' + (active
+        ? "Included only in groups of five or more."
+        : "Your data is excluded from cohort analytics.") +
+      '</small></div><button class="button ' + (active ? "button-light" : "button-dark") +
+      '" data-institution-consent="' + safe(organization.id || "") + '" data-granted="' +
+      (active ? "true" : "false") + '">' + (active ? "Withdraw consent" : "Allow analytics") +
+      '</button></article>';
+  }).join("") : '<div class="empty-state">No cohort or organization membership is connected to your account.</div>';
+  organizationSelect.innerHTML = memberships.length ? memberships.map(function(membership) {
+    const organization = Array.isArray(membership.organizations)
+      ? membership.organizations[0]
+      : membership.organizations;
+    return organization
+      ? '<option value="' + safe(organization.id) + '">' + safe(organization.name) + ' · ' +
+        safe(organization.organization_type) + '</option>'
+      : "";
+  }).join("") : '<option value="">No organization access</option>';
+  organizationSelect.value = institutionState.organizationId || "";
+  cohortSelect.innerHTML = '<option value="">All cohorts</option>' +
+    (institutionState.cohorts || []).map(function(cohort) {
+      return '<option value="' + safe(cohort.id) + '">' + safe(cohort.name) + '</option>';
+    }).join("");
+  cohortSelect.value = institutionState.cohortId || "";
+  organizationSelect.disabled = institutionState.loading || !memberships.length;
+  cohortSelect.disabled = institutionState.loading || !memberships.length;
+  if (institutionState.error) {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = institutionState.error;
+  } else if (institutionState.loading) {
+    status.classList.remove("hidden");
+    status.textContent = "Loading consented cohort outcomes…";
+  } else {
+    status.classList.add("hidden");
+  }
+  if (!memberships.length) {
+    content.innerHTML = '<section class="panel"><div class="empty-state empty-state-action"><strong>No institutional workspace connected</strong><p>An organization administrator must add your account as an advisor, analyst, admin, or owner.</p></div></section>';
+    return;
+  }
+  const dashboard = institutionState.dashboard;
+  if (!dashboard) {
+    content.innerHTML = '<section class="panel"><div class="empty-state"><strong>Select an organization</strong><p>Load its privacy-thresholded cohort dashboard.</p></div></section>';
+    return;
+  }
+  const privacy = dashboard.privacy || {};
+  const privacyPanel = document.getElementById("institutionPrivacyPanel");
+  privacyPanel.classList.toggle("is-suppressed", Boolean(privacy.suppressed));
+  privacyPanel.innerHTML = privacy.suppressed
+    ? '<strong>Analytics suppressed</strong><p>' + safe(privacy.reason || "The minimum consented group size has not been reached.") +
+      '</p><span>' + Number(privacy.consented_members || 0) + ' of ' + Number(privacy.minimum_group_size || 5) +
+      ' required participants</span>'
+    : '<strong>Privacy threshold satisfied</strong><p>Only active cohort-analytics consents are included. No individual records are returned.</p><span>' +
+      Number(privacy.consented_members || 0) + ' consented participants</span>';
+  if (privacy.suppressed) {
+    content.innerHTML = '<section class="panel"><div class="empty-state"><strong>Protecting participant privacy</strong><p>Aggregate participant outcomes will appear automatically when the minimum group size is reached.</p></div></section>' +
+      governmentWorkforceMarkup(institutionState.workforce);
+    return;
+  }
+  const employability = dashboard.employability || {};
+  const placements = dashboard.placements || {};
+  const engagement = dashboard.engagement || {};
+  const certifications = dashboard.certifications || {};
+  const effectiveness = dashboard.programme_effectiveness || {};
+  const categoryAverages = employability.category_averages || {};
+  content.innerHTML = '<div class="institution-metrics">' +
+    institutionMetric("Average readiness", employability.average_readiness === null ? null : employability.average_readiness + "%", employability.assessed_members + " assessed participants") +
+    institutionMetric("Placement rate", effectiveness.placement_rate === null ? null : effectiveness.placement_rate + "%", placements.placed_learners + " learners with offers") +
+    institutionMetric("Action completion", engagement.completion_rate === null ? null : engagement.completion_rate + "%", engagement.completed_actions + " completed milestones") +
+    institutionMetric("Verified credentials", certifications.verified, certifications.learners_with_verified + " credentialed learners") +
+    '</div><div class="institution-grid"><section class="panel"><div class="section-heading"><div><p class="eyebrow">Skills forecasting</p><h3>Most common capability gaps</h3></div></div>' +
+    distributionRows(dashboard.skill_gaps, "skill", "learners", "No shared skill gap clears the reporting threshold.") +
+    '</section><section class="panel"><div class="section-heading"><div><p class="eyebrow">Path distribution</p><h3>Where participants are heading</h3></div></div>' +
+    distributionRows(dashboard.career_paths, "target", "learners", "No career paths are available for this cohort.") +
+    '</section></div><section class="panel institution-category-panel"><div class="section-heading"><div><p class="eyebrow">Graduate readiness</p><h3>Readiness category averages</h3></div></div><div class="readiness-category-grid">' +
+    Object.entries(categoryAverages).map(function(entry) {
+      return '<article><div><strong>' + safe(entry[0].replaceAll("_", " ")) + '</strong><span>' +
+        Number(entry[1] || 0) + '%</span></div><div class="meter-track"><span style="width:' +
+        Number(entry[1] || 0) + '%"></span></div></article>';
+    }).join("") + '</div><p class="institution-limitation">' + safe(effectiveness.limitations || "") + '</p></section>' +
+    governmentWorkforceMarkup(institutionState.workforce);
+}
+
+function governmentWorkforceMarkup(workforce) {
+  if (!workforce || !workforce.available) return "";
+  const shortages = Array.isArray(workforce.regional_skill_shortages) ? workforce.regional_skill_shortages : [];
+  const trends = Array.isArray(workforce.workforce_trends) ? workforce.workforce_trends : [];
+  const forecasts = Array.isArray(workforce.skills_forecasting) ? workforce.skills_forecasting : [];
+  const programmes = Array.isArray(workforce.programmes) ? workforce.programmes : [];
+  const sources = Array.isArray(workforce.source_coverage) ? workforce.source_coverage : [];
+  return '<section class="government-workforce"><div class="section-heading"><div><p class="eyebrow">Government workforce intelligence</p><h3>' +
+    safe(workforce.country_code || workforce.region || "EMEA") +
+    ' labour-market signals</h3></div><span class="file-status">' + sources.length +
+    ' source' + (sources.length === 1 ? "" : "s") + '</span></div><div class="government-workforce-grid"><section class="panel"><h4>Regional skills shortages</h4>' +
+    (shortages.length ? shortages.map(function(item) {
+      return '<article class="workforce-signal"><div><strong>' + safe(item.skill) +
+        '</strong><span>' + safe([item.city, item.industry, item.job_family].filter(Boolean).join(" · ")) +
+        '</span></div><strong>' + safe(item.demand_value === null ? "Observed" : item.demand_value) +
+        ' ' + safe(item.demand_unit || "") + '</strong><a href="' + safe(item.source && item.source.source_url || "#") +
+        '" target="_blank" rel="noopener noreferrer">' + safe(item.source && item.source.source_name || "Source") +
+        '</a></article>';
+    }).join("") : '<div class="empty-state">No sourced shortage observation is available.</div>') +
+    '</section><section class="panel"><h4>Workforce trends</h4>' +
+    (trends.length ? trends.map(function(item) {
+      return '<article class="workforce-signal"><div><strong>' + safe(item.subject) +
+        '</strong><span>' + safe(item.signal_type.replaceAll("_", " ")) + ' · through ' +
+        safe(item.source && item.source.observed_to || "unknown") + '</span></div><strong>' +
+        safe(item.value_numeric === null ? "Observed" : item.value_numeric) + ' ' +
+        safe(item.value_unit || "") + '</strong></article>';
+    }).join("") : '<div class="empty-state">No sourced workforce trend is available.</div>') +
+    '</section><section class="panel"><h4>Skills signal trajectories</h4>' +
+    (forecasts.length ? forecasts.map(function(item) {
+      return '<article class="workforce-signal"><div><strong>' + safe(item.subject) +
+        '</strong><span>' + safe(item.basis) + '</span></div><strong>' + safe(item.direction) +
+        ' ' + (Number(item.delta || 0) >= 0 ? "+" : "") + Number(item.delta || 0) +
+        '</strong></article>';
+    }).join("") : '<div class="empty-state">Two comparable periods are required before a trajectory is shown.</div>') +
+    '</section><section class="panel"><h4>Programmes</h4>' +
+    (programmes.length ? programmes.map(function(programme) {
+      return '<article class="workforce-signal"><div><strong>' + safe(programme.name) +
+        '</strong><span>' + safe(programme.programme_type.replaceAll("_", " ")) +
+        '</span></div><strong>' + safe(programme.status) + '</strong></article>';
+    }).join("") : '<div class="empty-state">No workforce programme is configured.</div>') +
+    '</section></div><p class="institution-limitation">' +
+    safe((workforce.limitations || []).join(" ")) + '</p></section>';
+}
+
+async function loadInstitutionDashboard(forceOrganizations) {
+  if (!cloud || !session || config.localPreview || institutionState.loading) {
+    institutionState.loaded = true;
+    renderInstitutionDashboard();
+    return;
+  }
+  institutionState.loading = true;
+  institutionState.error = "";
+  renderInstitutionDashboard();
+  try {
+    if (forceOrganizations || !institutionState.loaded) {
+      const [organizations, consents] = await Promise.all([
+        cloud.functions.invoke("institution-dashboard", {
+          body: { action: "organizations" }
+        }),
+        cloud.functions.invoke("institution-dashboard", {
+          body: { action: "my_consents" }
+        })
+      ]);
+      if (organizations.error) throw organizations.error;
+      if (consents.error) throw consents.error;
+      institutionState.memberships = organizations.data && organizations.data.memberships || [];
+      institutionState.consents = consents.data && consents.data.consents || [];
+      const first = institutionState.memberships[0];
+      const organization = first && (Array.isArray(first.organizations) ? first.organizations[0] : first.organizations);
+      if (!institutionState.organizationId && organization) institutionState.organizationId = organization.id;
+      institutionState.loaded = true;
+    }
+    if (!institutionState.organizationId) {
+      institutionState.dashboard = null;
+      institutionState.workforce = null;
+      institutionState.cohorts = [];
+      return;
+    }
+    const result = await cloud.functions.invoke("institution-dashboard", {
+      body: {
+        action: "dashboard",
+        organizationId: institutionState.organizationId,
+        cohortId: institutionState.cohortId || null
+      }
+    });
+    if (result.error) throw result.error;
+    institutionState.dashboard = result.data && result.data.dashboard || null;
+    institutionState.cohorts = result.data && result.data.cohorts || [];
+    institutionState.workforce = result.data && result.data.workforce || null;
+  } catch (error) {
+    institutionState.error = await functionErrorMessage(error, "Institutional outcomes could not be loaded.");
+  } finally {
+    institutionState.loading = false;
+    renderInstitutionDashboard();
+  }
+}
+
+function renderMentorNetwork() {
+  renderMentorProfile();
+  const status = document.getElementById("mentorNetworkStatus");
+  const list = document.getElementById("mentorMatchList");
+  if (mentorNetworkState.error) {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = mentorNetworkState.error;
+  } else if (mentorNetworkState.loading) {
+    status.classList.remove("hidden");
+    status.textContent = "Comparing your Career Twin with opted-in mentor profiles…";
+  } else {
+    status.classList.add("hidden");
+  }
+  if (!mentorNetworkState.matches.length) {
+    list.innerHTML = '<section class="panel"><div class="empty-state empty-state-action"><strong>No mentor matches yet</strong><p>Refresh your Career Twin first, then search the opted-in mentor network.</p><button type="button" class="button button-light" data-mentor-refresh>Find mentors</button></div></section>';
+    const refresh = list.querySelector("[data-mentor-refresh]");
+    if (refresh) refresh.addEventListener("click", function() { loadMentorMatches(true); });
+    return;
+  }
+  list.innerHTML = mentorNetworkState.matches.map(function(match) {
+    const profile = Array.isArray(match.mentor_profiles) ? match.mentor_profiles[0] : match.mentor_profiles || {};
+    const rationale = match.rationale || {};
+    const dimensions = match.dimensions || {};
+    const skills = Array.isArray(rationale.skill_gaps_supported) ? rationale.skill_gaps_supported : [];
+    const languages = Array.isArray(profile.languages) ? profile.languages : [];
+    const locations = Array.isArray(profile.locations) ? profile.locations : [];
+    return '<article class="panel mentor-match"><div class="mentor-match-head"><div><span>' +
+      safe((profile.mentor_type || "mentor").replaceAll("_", " ")) + '</span><h3>' +
+      safe(profile.headline || "Mentor") + '</h3></div><strong>' + Math.round(Number(match.score || 0)) +
+      '% match</strong></div><p>' + safe(profile.biography || rationale.why || "") +
+      '</p><div class="mentor-match-facts"><span>' + safe(skills.length ? skills.join(", ") : "broader career alignment") +
+      '</span><span>' + safe(locations.length ? locations.join(", ") : "location flexible") +
+      '</span><span>' + safe(languages.length ? languages.join(", ") : "language not specified") +
+      '</span></div><details><summary>Why this match</summary><div class="mentor-dimensions">' +
+      Object.entries(dimensions).map(function(entry) {
+        return '<div><span>' + safe(entry[0].replaceAll("_", " ")) + '</span><strong>' +
+          Math.round(Number(entry[1] || 0)) + '%</strong></div>';
+      }).join("") + '</div><p>' + safe(rationale.limitations || "") + '</p></details>' +
+      (match.status === "suggested"
+        ? '<form class="mentor-request-form" data-mentor-request="' + safe(match.id) +
+          '"><label class="field-label" for="mentorMessage-' + safe(match.id) +
+          '">Introduction request</label><textarea class="textarea" id="mentorMessage-' + safe(match.id) +
+          '" minlength="20" maxlength="2000" rows="3" required placeholder="Share the goal you want help with and why this mentor is relevant."></textarea><button type="submit" class="button button-dark">Request introduction</button></form>'
+        : '<div class="mentor-request-state">' + safe(match.status === "requested" ? "Introduction requested" : match.status) + '</div>') +
+      '</article>';
+  }).join("");
+  list.querySelectorAll("[data-mentor-request]").forEach(function(form) {
+    form.addEventListener("submit", async function(event) {
+      event.preventDefault();
+      const button = form.querySelector('button[type="submit"]');
+      const message = form.querySelector("textarea").value.trim();
+      button.disabled = true;
+      try {
+        const result = await cloud.functions.invoke("mentor-network", {
+          body: { action: "request", matchId: form.dataset.mentorRequest, message: message }
+        });
+        if (result.error) throw result.error;
+        mentorNetworkState.matches = result.data && result.data.matches || [];
+        renderMentorNetwork();
+        toast("Introduction request sent");
+      } catch (error) {
+        mentorNetworkState.error = await functionErrorMessage(error, "The introduction request could not be sent.");
+        renderMentorNetwork();
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+function mentorProfileList(value) {
+  return [...new Set(String(value || "").split(",").map(function(item) {
+    return item.trim();
+  }).filter(Boolean))].slice(0, 30);
+}
+
+function renderMentorProfile() {
+  if (!mentorNetworkState.profileLoaded) return;
+  const profile = mentorNetworkState.profile || {};
+  document.getElementById("mentorType").value = profile.mentor_type || "industry_professional";
+  document.getElementById("mentorHeadline").value = profile.headline || "";
+  document.getElementById("mentorBiography").value = profile.biography || "";
+  document.getElementById("mentorIndustries").value = (profile.industries || []).join(", ");
+  document.getElementById("mentorSkills").value = (profile.skills || []).join(", ");
+  document.getElementById("mentorLocations").value = (profile.locations || []).join(", ");
+  document.getElementById("mentorLanguages").value = (profile.languages || []).join(", ");
+  document.getElementById("mentorExperienceLevels").value = (profile.experience_levels || []).join(", ");
+  document.getElementById("mentorCapacity").value = String(profile.maximum_active_mentees || 3);
+  document.getElementById("mentorDiscoveryConsent").checked = Boolean(
+    profile.accepting_mentees && profile.matching_consent_at
+  );
+  document.getElementById("mentorProfileState").textContent = profile.accepting_mentees
+    ? "Discoverable · " + String(profile.verification_status || "unverified").replaceAll("_", " ")
+    : profile.id ? "Saved privately" : "Private by default";
+}
+
+async function loadMentorMatches(refresh) {
+  if (!cloud || !session || config.localPreview || mentorNetworkState.loading) {
+    mentorNetworkState.loaded = true;
+    renderMentorNetwork();
+    return;
+  }
+  mentorNetworkState.loading = true;
+  mentorNetworkState.error = "";
+  renderMentorNetwork();
+  try {
+    if (!mentorNetworkState.profileLoaded) {
+      const ownProfile = await cloud.from("mentor_profiles").select("*")
+        .eq("user_id", session.user.id).maybeSingle();
+      if (ownProfile.error) throw ownProfile.error;
+      mentorNetworkState.profile = ownProfile.data || null;
+      mentorNetworkState.profileLoaded = true;
+    }
+    const result = await cloud.functions.invoke("mentor-network", {
+      body: { action: refresh ? "refresh" : "matches" }
+    });
+    if (result.error) throw result.error;
+    mentorNetworkState.matches = result.data && result.data.matches || [];
+    mentorNetworkState.loaded = true;
+  } catch (error) {
+    mentorNetworkState.error = await functionErrorMessage(error, "Mentor matches could not be loaded.");
+  } finally {
+    mentorNetworkState.loading = false;
+    renderMentorNetwork();
+  }
+}
+
+function renderCareerOperatingSystem() {
+  loadLabourMarketDashboard();
+  const operatingSystem = state.careerOperatingSystem || emptyCareerOperatingSystem();
+  const twin = operatingSystem.twin;
+  const arabicGuidance = state.profile.guidanceLocale === "ar";
+  const localeSelect = document.getElementById("careerGuidanceLocale");
+  if (localeSelect) localeSelect.value = state.profile.guidanceLocale || "en";
+  document.getElementById("careerTwinConfidence").textContent = twin
+    ? Math.round(Number(twin.confidence || 0) * 100) + "%"
+    : "0%";
+  document.getElementById("careerGraphNodeCount").textContent = Number(operatingSystem.graph.node_count || operatingSystem.nodes.length || 0);
+  document.getElementById("careerGraphEdgeCount").textContent = Number(operatingSystem.graph.edge_count || operatingSystem.edges.length || 0);
+  document.getElementById("careerRecommendationCount").textContent = operatingSystem.recommendations.length;
+  document.getElementById("careerTwinTrajectory").textContent = twin &&
+    (arabicGuidance ? twin.trajectory_ar || twin.trajectory : twin.trajectory) ||
+    (arabicGuidance ? "ابنِ توأمك المهني" : "Build your Career Twin");
+  document.getElementById("careerTwinSummary").textContent = twin &&
+    (arabicGuidance ? twin.summary_ar || twin.summary : twin.summary) ||
+    (arabicGuidance
+      ? "حدّث توأمك المهني بعد إضافة السيرة الذاتية أو الدور المستهدف أو الوظائف أو الأدلة."
+      : "Refresh your Career Twin after adding a CV, target role, job, or evidence.");
+  document.querySelector(".twin-summary-panel").classList.toggle("guidance-ar", arabicGuidance);
+  document.querySelector(".twin-summary-panel").dir = arabicGuidance ? "rtl" : "ltr";
+  document.getElementById("careerTwinUpdated").textContent = twin && twin.refreshed_at
+    ? "Updated " + formatDate(twin.refreshed_at)
+    : operatingSystem.available ? "Ready to generate" : "Requires v2 backend";
+  document.getElementById("careerTwinStrengths").innerHTML = careerInsightList(
+    twin && Array.isArray(twin.technical_strengths) ? twin.technical_strengths : [],
+    "Add evidence to identify technical strengths.",
+    "skill"
+  );
+  document.getElementById("careerTwinGaps").innerHTML = careerInsightList(
+    twin && Array.isArray(twin.missing_competencies) ? twin.missing_competencies : [],
+    "Run an analysis to identify evidence gaps.",
+    "skill"
+  );
+  document.getElementById("careerTwinBehaviours").innerHTML = careerInsightList(
+    twin && Array.isArray(twin.behavioural_strengths) ? twin.behavioural_strengths : [],
+    "Complete an interview round to identify behavioural strengths.",
+    "strength"
+  );
+  document.getElementById("careerTwinIndustries").innerHTML = careerInsightList(
+    twin && Array.isArray(twin.preferred_industries)
+      ? twin.preferred_industries.map(function(industry) {
+          return { industry: industry, confidence: twin.confidence };
+        })
+      : [],
+    "Add saved jobs with published company profiles to identify preferred industries.",
+    "industry"
+  );
+  renderCareerGraph(operatingSystem);
+  renderCareerRecommendations(operatingSystem);
+  renderCareerPlanning(operatingSystem);
+  renderPortfolioIntelligence();
+}
+
+function portfolioDimensionMarkup(dimensions) {
+  return Object.entries(dimensions || {}).map(function(entry) {
+    return '<div><span>' + safe(entry[0].replaceAll("_", " ")) + '</span><strong>' +
+      Math.round(Number(entry[1] || 0)) + '</strong></div>';
+  }).join("");
+}
+
+function renderPortfolioIntelligence() {
+  const assetList = document.getElementById("portfolioAssetList");
+  const credentialList = document.getElementById("careerCredentialList");
+  if (!assetList || !credentialList) return;
+  const assets = state.portfolioAssets || [];
+  const credentials = state.careerCredentials || [];
+  assetList.innerHTML = assets.length ? assets.map(function(asset) {
+    const analysis = asset.analysis || {};
+    const recommendations = Array.isArray(analysis.recommendations) ? analysis.recommendations : [];
+    return '<article class="portfolio-record"><div class="portfolio-record-head"><div><strong>' +
+      safe(asset.title) + '</strong><a href="' + safe(asset.url || "#") +
+      '" target="_blank" rel="noopener noreferrer">View repository</a></div><span>' +
+      (asset.analysed_at ? Math.round(Number(analysis.overall_score || 0)) + "/100" : "Not analysed") +
+      '</span></div>' + (asset.analysed_at
+        ? '<div class="portfolio-dimensions">' + portfolioDimensionMarkup(analysis.dimensions) +
+          '</div><p class="record-limitation">' + safe(analysis.limitations || "") +
+          '</p><ul>' + recommendations.map(function(item) { return '<li>' + safe(item.action) + '</li>'; }).join("") + '</ul>'
+        : '<p>Run the public-signal analysis to create an evidence-backed project report.</p>') +
+      '<div class="record-actions"><button type="button" class="button button-light" data-analyse-portfolio="' +
+      safe(asset.id) + '">' + (asset.analysed_at ? "Refresh analysis" : "Analyse project") +
+      '</button><button type="button" class="button button-quiet" data-delete-portfolio="' +
+      safe(asset.id) + '">Remove</button></div></article>';
+  }).join("") : '<div class="empty-state"><strong>No project evidence yet</strong><p>Add a public GitHub repository to assess its visible engineering signals.</p></div>';
+  credentialList.innerHTML = credentials.length ? credentials.map(function(credential) {
+    const verification = credential.verification || {};
+    const status = credential.verification_status || "unverified";
+    const statusLabel = status === "issuer_observed" ? "issuer observed" : status;
+    const expiry = credential.expires_on ? new Date(credential.expires_on + "T23:59:59Z") : null;
+    const expiryDays = expiry && Number.isFinite(expiry.getTime())
+      ? Math.ceil((expiry.getTime() - Date.now()) / 86400000)
+      : null;
+    const expiryCopy = expiryDays === null
+      ? "No expiry date recorded"
+      : expiryDays < 0 ? "Expired " + formatDate(credential.expires_on)
+        : expiryDays <= 90 ? "Expires in " + expiryDays + " days · " + formatDate(credential.expires_on)
+          : "Expires " + formatDate(credential.expires_on);
+    return '<article class="portfolio-record"><div class="portfolio-record-head"><div><strong>' +
+      safe(credential.name) + '</strong><span>' + safe(credential.issuer) + '</span></div><span class="credential-status credential-' +
+      safe(status) + '">' + safe(statusLabel) + '</span></div><p>' +
+      safe(verification.reason || "Verification has not been run against the original issuer.") +
+      '</p><p class="credential-expiry' + (expiryDays !== null && expiryDays <= 90 ? " is-due" : "") + '">' +
+      safe(expiryCopy) + '</p>' + (verification.provider_guidance_url
+        ? '<a class="credential-guidance" href="' + safe(verification.provider_guidance_url) +
+          '" target="_blank" rel="noopener noreferrer">Provider verification guidance</a>'
+        : "") +
+      '<div class="record-actions"><button type="button" class="button button-light" data-verify-credential="' +
+      safe(credential.id) + '">Verify source</button><button type="button" class="button button-quiet" data-delete-credential="' +
+      safe(credential.id) + '">Remove</button></div></article>';
+  }).join("") : '<div class="empty-state"><strong>No credentials yet</strong><p>Add an issuer URL. Verified status requires a machine-readable assertion tied to your account email.</p></div>';
+  assetList.querySelectorAll("[data-analyse-portfolio]").forEach(function(button) {
+    button.addEventListener("click", function() { runPortfolioAction("analyse_portfolio", button.dataset.analysePortfolio, button); });
+  });
+  credentialList.querySelectorAll("[data-verify-credential]").forEach(function(button) {
+    button.addEventListener("click", function() { runPortfolioAction("verify_credential", button.dataset.verifyCredential, button); });
+  });
+  assetList.querySelectorAll("[data-delete-portfolio]").forEach(function(button) {
+    button.addEventListener("click", function() { deletePortfolioRecord("portfolio_assets", button.dataset.deletePortfolio); });
+  });
+  credentialList.querySelectorAll("[data-delete-credential]").forEach(function(button) {
+    button.addEventListener("click", function() { deletePortfolioRecord("career_credentials", button.dataset.deleteCredential); });
+  });
+}
+
+async function runPortfolioAction(action, id, button) {
+  const status = document.getElementById("portfolioIntelligenceStatus");
+  if (!cloud || !session || config.localPreview) {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = "Portfolio intelligence requires the connected v2 backend.";
+    return;
+  }
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = action === "analyse_portfolio" ? "Analysing…" : "Verifying…";
+  status.classList.remove("hidden", "is-success");
+  status.textContent = action === "analyse_portfolio"
+    ? "Reviewing bounded public repository signals…"
+    : "Checking the issuer source and account binding…";
+  try {
+    const result = await cloud.functions.invoke("portfolio-intelligence", { body: { action: action, id: id } });
+    if (result.error) throw result.error;
+    if (result.data.asset) {
+      state.portfolioAssets = state.portfolioAssets.filter(function(item) { return item.id !== id; });
+      state.portfolioAssets.unshift(result.data.asset);
+    }
+    if (result.data.credential) {
+      state.careerCredentials = state.careerCredentials.filter(function(item) { return item.id !== id; });
+      state.careerCredentials.unshift(result.data.credential);
+    }
+    lastCareerTwinSourceSignature = careerTwinSourceSignature(state);
+    scheduleCareerTwinRefresh();
+    renderPortfolioIntelligence();
+    status.classList.add("is-success");
+    status.textContent = action === "analyse_portfolio" ? "Project report updated." : "Credential source check completed.";
+  } catch (error) {
+    status.textContent = await functionErrorMessage(error, "Portfolio intelligence could not be completed.");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+async function deletePortfolioRecord(table, id) {
+  if (!cloud || !session || config.localPreview) return;
+  const result = await cloud.from(table).delete().eq("id", id).eq("user_id", session.user.id);
+  if (result.error) { toast(result.error.message || "The record could not be removed."); return; }
+  if (table === "portfolio_assets") state.portfolioAssets = state.portfolioAssets.filter(function(item) { return item.id !== id; });
+  else state.careerCredentials = state.careerCredentials.filter(function(item) { return item.id !== id; });
+  lastCareerTwinSourceSignature = careerTwinSourceSignature(state);
+  scheduleCareerTwinRefresh();
+  renderPortfolioIntelligence();
+}
+
 function membershipQuota(featureKey, fallback) {
   const feature = accountAccess.features && accountAccess.features[featureKey];
   if (!feature) return fallback;
@@ -862,6 +2281,7 @@ function render() {
     renderApplicationCockpit();
     renderInterviewPractice();
     renderReminders();
+    renderCareerOperatingSystem();
     return;
   }
   const items = analysisFor(path);
@@ -895,15 +2315,21 @@ function render() {
   renderApplicationCockpit();
   renderInterviewPractice();
   renderReminders();
+  renderCareerOperatingSystem();
+  renderInstitutionDashboard();
+  renderMentorNetwork();
   renderSetupChecklist(path);
   renderNextAction(path);
   document.getElementById("pageTitle").textContent = activeView === "overview" ? "Your next move"
+    : activeView === "twin" ? "Career Twin"
     : activeView === "paths" ? "Role match"
     : activeView === "applications" ? "Applications"
     : activeView === "interview" ? "Interview prep"
     : activeView === "knowledge" ? "Skill gaps"
     : activeView === "plan" ? "Career plan"
     : activeView === "progress" ? "Reports"
+    : activeView === "institution" ? "Institution"
+    : activeView === "mentors" ? "Mentors"
     : "Your CV";
 }
 
@@ -1139,6 +2565,123 @@ function applicationPriority(record, now, today, soon) {
   return null;
 }
 
+function percentage(numerator, denominator) {
+  return denominator ? Math.round(numerator / denominator * 100) + "%" : "—";
+}
+
+function renderApplicationIntelligence(records) {
+  const submitted = records.filter(function(record) {
+    return record.job.appliedAt || ["applied", "interviewing", "offer", "rejected"].includes(record.job.status);
+  });
+  const responded = submitted.filter(function(record) {
+    return ["interviewing", "offer", "rejected"].includes(record.job.status);
+  });
+  const interviewed = submitted.filter(function(record) {
+    return ["interviewing", "offer"].includes(record.job.status) || record.job.interviewAt;
+  });
+  const offered = submitted.filter(function(record) { return record.job.status === "offer"; });
+  const thirtyDaysAgo = Date.now() - 30 * 86400000;
+  const recent = submitted.filter(function(record) {
+    const date = new Date(record.job.appliedAt || "");
+    return !Number.isNaN(date.getTime()) && date.getTime() >= thirtyDaysAgo;
+  });
+  document.getElementById("applicationResponseRate").textContent = percentage(responded.length, submitted.length);
+  document.getElementById("applicationInterviewConversion").textContent = percentage(interviewed.length, submitted.length);
+  document.getElementById("applicationOfferConversion").textContent = percentage(offered.length, submitted.length);
+  document.getElementById("applicationVelocity").textContent = recent.length ? recent.length + " / 30d" : submitted.length ? "0 / 30d" : "—";
+  document.getElementById("applicationAnalyticsWindow").textContent = submitted.length
+    ? submitted.length + " submitted application" + (submitted.length === 1 ? "" : "s")
+    : "No submitted applications";
+
+  const companies = new Map();
+  submitted.forEach(function(record) {
+    const company = record.job.company || "Unspecified company";
+    const current = companies.get(company) || { total: 0, responses: 0, interviews: 0 };
+    current.total += 1;
+    if (responded.includes(record)) current.responses += 1;
+    if (interviewed.includes(record)) current.interviews += 1;
+    companies.set(company, current);
+  });
+  const bestCompany = [...companies.entries()]
+    .filter(function(entry) { return entry[1].total >= 2; })
+    .sort(function(left, right) {
+      return right[1].interviews / right[1].total - left[1].interviews / left[1].total;
+    })[0];
+  const timing = new Map();
+  submitted.forEach(function(record) {
+    const date = new Date(record.job.appliedAt || "");
+    if (Number.isNaN(date.getTime())) return;
+    const day = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date);
+    const current = timing.get(day) || { total: 0, responses: 0 };
+    current.total += 1;
+    if (responded.includes(record)) current.responses += 1;
+    timing.set(day, current);
+  });
+  const bestTiming = [...timing.entries()]
+    .filter(function(entry) { return entry[1].total >= 3; })
+    .sort(function(left, right) {
+      return right[1].responses / right[1].total - left[1].responses / left[1].total;
+    })[0];
+  const cvVersions = new Map();
+  submitted.forEach(function(record) {
+    const version = String(record.job.cvVersionLabel || "").trim();
+    if (!version) return;
+    const current = cvVersions.get(version) || { total: 0, responses: 0, interviews: 0 };
+    current.total += 1;
+    if (responded.includes(record)) current.responses += 1;
+    if (interviewed.includes(record)) current.interviews += 1;
+    cvVersions.set(version, current);
+  });
+  const bestCvVersion = [...cvVersions.entries()]
+    .filter(function(entry) { return entry[1].total >= 2; })
+    .sort(function(left, right) {
+      return right[1].interviews / right[1].total - left[1].interviews / left[1].total;
+    })[0];
+  const rejected = submitted.filter(function(record) { return record.job.status === "rejected"; });
+  const suggestions = [];
+  if (submitted.length < 5) {
+    suggestions.push({
+      title: "Build a stronger sample",
+      detail: "Record at least five submitted applications before treating conversion patterns as directional.",
+    });
+  } else if (interviewed.length / submitted.length < 0.2) {
+    suggestions.push({
+      title: "Improve pre-interview conversion",
+      detail: "Prioritise closer role matches and attach stronger evidence for the recurring gaps in your Career Twin.",
+    });
+  }
+  if (rejected.length >= 3) {
+    suggestions.push({
+      title: "Review rejection concentration",
+      detail: rejected.length + " recorded rejections should be compared by role family, location, and missing evidence before the next batch.",
+    });
+  }
+  const insights = [
+    {
+      label: "Best-performing company",
+      value: bestCompany
+        ? bestCompany[0] + " · " + percentage(bestCompany[1].interviews, bestCompany[1].total) + " interview conversion"
+        : "Needs at least two submitted applications per company.",
+    },
+    {
+      label: "Best application timing",
+      value: bestTiming
+        ? bestTiming[0] + " · " + percentage(bestTiming[1].responses, bestTiming[1].total) + " response rate"
+        : "Needs at least three dated applications on the same weekday.",
+    },
+    {
+      label: "Best-performing CV version",
+      value: bestCvVersion
+        ? bestCvVersion[0] + " · " + percentage(bestCvVersion[1].interviews, bestCvVersion[1].total) + " interview conversion"
+        : "Add a CV version to applications; at least two submissions per version are required.",
+    },
+    ...suggestions.map(function(item) { return { label: item.title, value: item.detail }; })
+  ];
+  document.getElementById("applicationIntelligenceInsights").innerHTML = insights.map(function(item) {
+    return '<article><strong>' + safe(item.label) + '</strong><p>' + safe(item.value) + '</p></article>';
+  }).join("");
+}
+
 function renderApplicationCockpit() {
   const all = applicationRecords();
   const now = new Date();
@@ -1159,6 +2702,7 @@ function renderApplicationCockpit() {
   document.getElementById("applicationDueStat").textContent = priorities.filter(function(item) { return item.priority.rank <= 1; }).length;
   document.getElementById("applicationInterviewStat").textContent = upcomingInterviews.length;
   document.getElementById("applicationOfferStat").textContent = all.filter(function(record) { return record.job.status === "offer"; }).length;
+  renderApplicationIntelligence(all);
   document.getElementById("applicationTodayCount").textContent = priorities.length + (priorities.length === 1 ? " item" : " items");
 
   const todayList = document.getElementById("applicationTodayList");
@@ -1230,7 +2774,7 @@ const INTERVIEW_BADGES = [
   ["first_answer", "First answer", "Save your first practice answer"],
   ["warm_up", "Warmed up", "Answer five interview questions"],
   ["session_complete", "Full round", "Complete a six-question round"],
-  ["streak_3", "In rhythm", "Practise on three consecutive days"],
+  ["streak_3", "In rhythm", "Practice on three consecutive days"],
   ["xp_500", "Interview ready", "Earn 500 practice XP"]
 ];
 
@@ -1314,7 +2858,7 @@ async function ensureInterviewAssessment(sessionId, force) {
     practice.assessment_failure_code = null;
     renderInterviewPractice();
     try {
-      if (config.localPreview) {
+      if (config.localPreview || isLocalDemo) {
         const answers = state.interviewAnswers.filter(function(item) { return item.session_id === sessionId; });
         practice.assessment = localInterviewAssessment(practice, answers);
         practice.assessment_status = "succeeded";
@@ -1354,11 +2898,34 @@ function finishInterviewRecordingStream() {
   interviewRecordingTimer = null;
   if (interviewRecordingStream) interviewRecordingStream.getTracks().forEach(function(track) { track.stop(); });
   interviewRecordingStream = null;
+  if (interviewVideoPreview) {
+    interviewVideoPreview.srcObject = null;
+    interviewVideoPreview.classList.add("hidden");
+    interviewVideoPreview = null;
+  }
 }
 
 function stopInterviewRecording() {
   if (interviewRecorder && interviewRecorder.state === "recording") interviewRecorder.stop();
   finishInterviewRecordingStream();
+}
+
+async function requestInterviewTranscript(blob, question) {
+  if (isLocalDemo) {
+    return "In this synthetic example, I stabilised the service, compared version-level errors and traces, rolled back safely, and then added release-aware alerts so the same detection gap would not recur.";
+  }
+  const extension = blob.type.includes("mp4") ? "mp4" : "webm";
+  const form = new FormData();
+  form.append("audio", new File([blob], "interview-answer." + extension, { type: blob.type.split(";")[0] }), "interview-answer." + extension);
+  form.append("question", question.question);
+  const response = await fetch(config.supabaseUrl + "/functions/v1/interview-transcribe", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + session.access_token, apikey: config.supabasePublishableKey },
+    body: form
+  });
+  const payload = await response.json().catch(function() { return {}; });
+  if (!response.ok) throw new Error(payload.error || "The recording could not be transcribed");
+  return payload.transcript;
 }
 
 async function transcribeInterviewRecording(blob, question) {
@@ -1368,23 +2935,15 @@ async function transcribeInterviewRecording(blob, question) {
   if (status) status.textContent = "Transcribing your answer…";
   if (button) button.disabled = true;
   try {
-    const extension = blob.type.includes("mp4") ? "m4a" : "webm";
-    const form = new FormData();
-    form.append("audio", new File([blob], "interview-answer." + extension, { type: blob.type.split(";")[0] }), "interview-answer." + extension);
-    form.append("question", question.question);
-    const response = await fetch(config.supabaseUrl + "/functions/v1/interview-transcribe", {
-      method: "POST",
-      headers: { Authorization: "Bearer " + session.access_token, apikey: config.supabasePublishableKey },
-      body: form
-    });
-    const payload = await response.json().catch(function() { return {}; });
-    if (!response.ok) throw new Error(payload.error || "The recording could not be transcribed");
+    const transcript = await requestInterviewTranscript(blob, question);
     const textarea = stage.querySelector("#interviewAnswer");
     if (!textarea) return;
-    textarea.value = textarea.value.trim() ? textarea.value.trim() + "\n\n" + payload.transcript : payload.transcript;
+    textarea.value = textarea.value.trim() ? textarea.value.trim() + "\n\n" + transcript : transcript;
     textarea.focus();
-    status.textContent = "Transcript added. Review it before saving.";
-    toast("Transcript ready to edit");
+    status.textContent = isLocalDemo
+      ? "Deterministic local transcript added. Review it before saving."
+      : "Transcript added. Review it before saving.";
+    toast(isLocalDemo ? "Local demo transcript ready" : "Transcript ready to edit");
   } catch (error) {
     if (status) status.textContent = error.message || "The recording could not be transcribed.";
     toast(error.message || "The recording could not be transcribed");
@@ -1435,6 +2994,156 @@ async function startInterviewRecording(question) {
   }
 }
 
+function videoRecordingMimeType() {
+  if (!window.MediaRecorder) return "";
+  return ["video/webm;codecs=vp8,opus", "video/webm", "video/mp4"].find(function(type) {
+    return typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(type);
+  }) || "";
+}
+
+function captureInterviewVideoFrame() {
+  if (!interviewVideoPreview || !interviewVideoPreview.videoWidth || interviewVideoFrames.length >= 8) return;
+  const width = Math.min(480, interviewVideoPreview.videoWidth);
+  const height = Math.max(1, Math.round(width * interviewVideoPreview.videoHeight / interviewVideoPreview.videoWidth));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) return;
+  context.drawImage(interviewVideoPreview, 0, 0, width, height);
+  interviewVideoFrames.push(canvas.toDataURL("image/jpeg", 0.62));
+}
+
+function videoAssessmentMarkup(assessment) {
+  if (!assessment) return "";
+  const report = assessment.report || {};
+  const dimensions = [
+    ["Gaze alignment", report.gaze_alignment],
+    ["Posture stability", report.posture_stability],
+    ["Gesture use", report.gesture_use],
+    ["Confidence presentation", report.confidence_presentation],
+    ["Answer structure", report.answer_structure],
+    ["Technical depth", report.technical_depth]
+  ];
+  const fillers = assessment.filler_words || {};
+  const fillerTotal = Object.values(fillers).reduce(function(sum, value) { return sum + Number(value || 0); }, 0);
+  return '<section class="interview-video-report"><div class="interview-assessment-head"><div><p class="eyebrow">Video coaching</p><h3>Presentation mechanics</h3></div><small>Sparse-frame review · not hiring probability</small></div><p class="interview-assessment-summary">' +
+    safe(report.summary || "") + '</p><div class="video-delivery-metrics"><article><span>Speaking pace</span><strong>' +
+    Number(assessment.pace_words_per_minute || 0) + ' wpm</strong></article><article><span>Filler words</span><strong>' +
+    fillerTotal + '</strong></article><article><span>Frames reviewed</span><strong>' +
+    Number(assessment.frame_count || 0) + '</strong></article></div><div class="video-coaching-grid">' +
+    dimensions.map(function(entry) {
+      const item = entry[1] || {};
+      return '<article><div><strong>' + safe(entry[0]) + '</strong><span>' +
+        Math.round(Number(item.confidence || 0) * 100) + '% observation confidence</span></div><p>' +
+        safe(item.observation || "") + '</p><small>' + safe(item.coaching || "") + '</small></article>';
+    }).join("") + '</div><div class="interview-next-practice"><strong>Next exercise</strong><p>' +
+    safe(report.next_exercise || "") + '</p></div><p class="interview-assessment-scope">The recording is not stored. Orynta retains the editable transcript, aggregate pace and filler counts, sparse-frame observations, and this report. It does not perform facial recognition, emotion detection, accent scoring, personality inference, or protected-trait analysis.</p></section>';
+}
+
+function renderCurrentVideoAssessment() {
+  const container = document.querySelector("#interviewVideoAssessment");
+  if (!container) return;
+  const assessment = (state.interviewVideoAssessments || []).find(function(item) {
+    return item.session_id === selectedInterviewSessionId && Number(item.question_index) === selectedInterviewQuestion;
+  });
+  container.innerHTML = videoAssessmentMarkup(assessment);
+}
+
+async function transcribeAndAssessInterviewVideo(blob, question, practiceId, questionIndex, durationSeconds, frames) {
+  const stage = document.getElementById("interviewStage");
+  const status = stage.querySelector("#interviewRecordingStatus");
+  const button = stage.querySelector("#interviewVideoButton");
+  try {
+    if (status) status.textContent = "Transcribing and reviewing presentation mechanics…";
+    const transcript = await requestInterviewTranscript(blob, question);
+    const textarea = stage.querySelector("#interviewAnswer");
+    if (textarea) textarea.value = textarea.value.trim() ? textarea.value.trim() + "\n\n" + transcript : transcript;
+    if (isLocalDemo) {
+      if (status) status.textContent = "Video coaching requires the connected backend. The local transcript was added.";
+      return;
+    }
+    const result = await cloud.functions.invoke("interview-video-assess", {
+      body: {
+        sessionId: practiceId,
+        questionIndex: questionIndex,
+        durationSeconds: durationSeconds,
+        transcript: transcript,
+        frames: frames
+      }
+    });
+    if (result.error) throw result.error;
+    state.interviewVideoAssessments = (state.interviewVideoAssessments || []).filter(function(item) {
+      return !(item.session_id === practiceId && Number(item.question_index) === questionIndex);
+    });
+    state.interviewVideoAssessments.unshift(result.data.assessment);
+    renderCurrentVideoAssessment();
+    if (status) status.textContent = "Video coaching ready. Review the transcript before saving.";
+  } catch (error) {
+    if (status) status.textContent = await functionErrorMessage(error, "Video coaching could not be completed.");
+  } finally {
+    interviewVoiceBusy = false;
+    if (button) { button.disabled = false; button.textContent = "Video practice"; button.classList.remove("is-recording"); }
+  }
+}
+
+async function startInterviewVideoRecording(question, practiceId, questionIndex) {
+  const stage = document.getElementById("interviewStage");
+  const button = stage.querySelector("#interviewVideoButton");
+  const status = stage.querySelector("#interviewRecordingStatus");
+  if (interviewRecorder && interviewRecorder.state === "recording") { stopInterviewRecording(); return; }
+  try {
+    const mimeType = videoRecordingMimeType();
+    interviewRecordingStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true },
+      video: { width: { ideal: 640 }, height: { ideal: 360 }, facingMode: "user" }
+    });
+    interviewVideoPreview = stage.querySelector("#interviewVideoPreview");
+    interviewVideoPreview.srcObject = interviewRecordingStream;
+    interviewVideoPreview.classList.remove("hidden");
+    interviewVideoFrames = [];
+    interviewRecordingChunks = [];
+    interviewVideoPreview.onloadeddata = captureInterviewVideoFrame;
+    interviewRecorder = mimeType
+      ? new MediaRecorder(interviewRecordingStream, { mimeType: mimeType, videoBitsPerSecond: 450000, audioBitsPerSecond: 64000 })
+      : new MediaRecorder(interviewRecordingStream);
+    interviewRecorder.ondataavailable = function(event) { if (event.data.size) interviewRecordingChunks.push(event.data); };
+    interviewRecorder.onstop = function() {
+      captureInterviewVideoFrame();
+      const duration = Math.max(3, Math.round((Date.now() - interviewRecordingStartedAt) / 1000));
+      const frames = interviewVideoFrames.slice(0, 8);
+      const blob = new Blob(interviewRecordingChunks, { type: interviewRecorder.mimeType || mimeType || "video/webm" });
+      finishInterviewRecordingStream();
+      interviewRecorder = null;
+      if (blob.size >= 1000 && frames.length) {
+        transcribeAndAssessInterviewVideo(blob, question, practiceId, questionIndex, duration, frames);
+      } else {
+        interviewVoiceBusy = false;
+        if (status) status.textContent = "No usable video was captured. Try again.";
+      }
+    };
+    interviewRecordingStartedAt = Date.now();
+    interviewVoiceBusy = true;
+    interviewRecorder.start(1000);
+    button.textContent = "Stop video";
+    button.classList.add("is-recording");
+    status.textContent = "Video recording · 0:00 of 2:00 · not stored";
+    interviewRecordingTimer = setInterval(function() {
+      const elapsed = Math.floor((Date.now() - interviewRecordingStartedAt) / 1000);
+      if (elapsed >= interviewVideoFrames.length * 15) captureInterviewVideoFrame();
+      if (status) status.textContent = "Video recording · " + Math.floor(elapsed / 60) + ":" +
+        String(elapsed % 60).padStart(2, "0") + " of 2:00 · not stored";
+      if (elapsed >= 120) stopInterviewRecording();
+    }, 500);
+  } catch (error) {
+    interviewVoiceBusy = false;
+    finishInterviewRecordingStream();
+    if (status) status.textContent = error && error.name === "NotAllowedError"
+      ? "Camera and microphone permission was not granted. You can still type your answer."
+      : "Video practice is not available in this browser.";
+  }
+}
+
 function interviewAssessmentMarkup(practice) {
   if (practice.status !== "completed") return "";
   const status = practice.assessment_status || "not_started";
@@ -1457,7 +3166,7 @@ async function generateInterviewPractice() {
   button.textContent = "Building your round…";
   trackProductEvent("workflow_started", "interview", "interview_practice");
   try {
-    if (config.localPreview) {
+    if (config.localPreview || isLocalDemo) {
       const practice = {
         id: crypto.randomUUID(), job_id: record.job.id, path_id: record.path.id,
         title: record.job.title, company: record.job.company || "",
@@ -1467,7 +3176,8 @@ async function generateInterviewPractice() {
       state.interviewSessions.unshift(practice);
       selectedInterviewSessionId = practice.id;
       selectedInterviewQuestion = 0;
-      saveState();
+      if (isLocalDemo) localStorage.setItem(cacheKey(), JSON.stringify(state));
+      else saveState();
       render();
       toast("Practice round ready");
       return;
@@ -1497,7 +3207,7 @@ async function saveInterviewAnswer(sessionId, questionIndex, answerText, selfRat
   button.disabled = true;
   button.textContent = "Saving answer…";
   try {
-    if (config.localPreview) {
+    if (config.localPreview || isLocalDemo) {
       const practice = state.interviewSessions.find(function(item) { return item.id === sessionId; });
       const existing = state.interviewAnswers.find(function(item) { return item.session_id === sessionId && item.question_index === questionIndex; });
       let answerXp = 0;
@@ -1547,6 +3257,73 @@ async function saveInterviewAnswer(sessionId, questionIndex, answerText, selfRat
   }
 }
 
+function companyBriefItemLabel(item) {
+  if (typeof item === "string") return item;
+  return item && (item.name || item.title || item.signal || item.question || item.summary) || "Company signal";
+}
+
+function renderCompanyBrief() {
+  const container = document.getElementById("companyBriefResult");
+  const button = document.getElementById("generateCompanyBriefButton");
+  button.disabled = companyBriefLoading || !document.getElementById("interviewJobSelect").value;
+  button.textContent = companyBriefLoading ? "Building briefing…" : "Build company briefing";
+  if (!companyBrief) {
+    container.innerHTML = '<p class="company-brief-empty">Build a sourced briefing before interview practice.</p>';
+    return;
+  }
+  const overview = companyBrief.overview || {};
+  const sections = [
+    ["Products", companyBrief.products],
+    ["Technology stack", companyBrief.technologies],
+    ["Hiring trends", companyBrief.hiring_trends],
+    ["Interview expectations", companyBrief.interview_expectations],
+    ["Recent news", companyBrief.recent_news],
+    ["Competitors", companyBrief.competitors],
+  ];
+  container.innerHTML = '<article class="company-brief"><div><span>Company briefing</span><strong>' +
+    safe(companyBrief.company_name) + '</strong></div>' +
+    (overview.available
+      ? '<p>' + safe(overview.text) + '</p>'
+      : '<p class="company-unavailable">No sourced overview is available.</p>') +
+    sections.map(function(section) {
+      const items = Array.isArray(section[1]) ? section[1] : [];
+      return '<section><strong>' + safe(section[0]) + '</strong>' +
+        (items.length
+          ? '<ul>' + items.slice(0, 5).map(function(item) {
+            return '<li>' + safe(companyBriefItemLabel(item)) + '</li>';
+          }).join("") + '</ul>'
+          : '<span>Unavailable from current sources</span>') + '</section>';
+    }).join("") +
+    '<section><strong>Questions to ask</strong><ul>' +
+    (companyBrief.suggested_questions || []).map(function(item) {
+      return '<li>' + safe(item.question) + '</li>';
+    }).join("") + '</ul></section><details><summary>Sources and limitations</summary><p>' +
+    safe(companyBrief.limitations || "") + '</p><span>' +
+    Number((companyBrief.evidence_refs || []).length) + ' evidence references</span></details></article>';
+}
+
+async function generateCompanyBrief() {
+  const jobId = document.getElementById("interviewJobSelect").value;
+  if (!jobId) { toast("Add and select a job first"); return; }
+  if (!cloud || !session || config.localPreview) {
+    toast("Company briefing requires the connected v2 backend");
+    return;
+  }
+  companyBriefLoading = true;
+  renderCompanyBrief();
+  try {
+    const result = await cloud.functions.invoke("company-intelligence", { body: { jobId: jobId } });
+    if (result.error) throw result.error;
+    companyBrief = result.data && result.data.brief || null;
+    renderCompanyBrief();
+  } catch (error) {
+    toast(await functionErrorMessage(error, "The company briefing could not be generated."));
+  } finally {
+    companyBriefLoading = false;
+    renderCompanyBrief();
+  }
+}
+
 function renderInterviewPractice() {
   const records = applicationRecords();
   const select = document.getElementById("interviewJobSelect");
@@ -1565,6 +3342,12 @@ function renderInterviewPractice() {
     ? "Unlimited practice rounds are included in your plan."
     : (accountAccess.plan === "premium" ? "Premium includes " + (quota || 20) + " practice rounds each month." : "Free includes one practice round each month.");
   document.getElementById("generateInterviewButton").onclick = generateInterviewPractice;
+  document.getElementById("generateCompanyBriefButton").onclick = generateCompanyBrief;
+  select.onchange = function() {
+    companyBrief = null;
+    renderCompanyBrief();
+  };
+  renderCompanyBrief();
 
   const game = state.interviewGameProfile || {};
   const totalXp = Number(game.total_xp || 0);
@@ -1623,14 +3406,17 @@ function renderInterviewPractice() {
   const voiceButton = voiceAllowed
     ? '<button type="button" class="button button-light" id="interviewRecordButton"' + (recordingSupported ? "" : " disabled") + '>Record answer</button>'
     : '<button type="button" class="button button-light" id="interviewPremiumVoiceButton">Microphone · Premium</button>';
+  const videoButton = voiceAllowed
+    ? '<button type="button" class="button button-light" id="interviewVideoButton"' + (recordingSupported ? "" : " disabled") + '>Video practice</button>'
+    : "";
   const voiceStatus = voiceAllowed
     ? (recordingSupported ? "Up to 2 minutes. Audio is transcribed and not stored." : "Recording is not supported in this browser. You can still type your answer.")
-    : "Upgrade to practise aloud and turn your recording into an editable transcript.";
+    : "Upgrade to practice aloud and turn your recording into an editable transcript.";
   stage.innerHTML = '<div class="interview-stage-head"><div><span>' + safe(practice.title) + (practice.company ? " · " + safe(practice.company) : "") + '</span><h3>Question ' + (selectedInterviewQuestion + 1) + " of " + questions.length + '</h3></div><strong>' + Number(practice.answered_count || 0) + "/" + questions.length + " complete</strong></div>"
     + '<div class="interview-question-progress">' + questions.map(function(_item, index) { return '<button type="button" class="' + (index === selectedInterviewQuestion ? "is-current" : answers.some(function(saved) { return saved.question_index === index; }) ? "is-done" : "") + '" data-interview-question="' + index + '" aria-label="Open question ' + (index + 1) + '"></button>'; }).join("") + '</div>'
     + interviewAssessmentMarkup(practice)
     + '<article class="interview-question"><div class="interview-question-meta"><span>' + safe(question.category) + '</span><span>' + safe(question.difficulty) + '</span></div><h2>' + safe(question.question) + '</h2><p>' + safe(question.why_it_matters) + '</p></article>'
-    + '<form id="interviewAnswerForm"><div class="interview-answer-heading"><label class="field-label" for="interviewAnswer">Practise your answer</label><div class="interview-voice-controls">' + voiceButton + '<span id="interviewRecordingStatus" aria-live="polite">' + safe(voiceStatus) + '</span></div></div><textarea class="textarea" id="interviewAnswer" rows="9" maxlength="8000" placeholder="Write the answer you would give aloud. Specific examples earn the strongest practice value.">' + safe(answer && answer.answer_text || "") + '</textarea><div class="interview-rating"><label class="field-label" for="interviewRating">How confident did that feel?</label><select class="input" id="interviewRating"><option value="1">1 · I struggled</option><option value="2">2 · Needs work</option><option value="3">3 · Getting there</option><option value="4">4 · Strong</option><option value="5">5 · Ready to say aloud</option></select></div><div class="form-actions"><button type="button" class="button button-light" id="previousInterviewQuestion"' + (selectedInterviewQuestion === 0 ? " disabled" : "") + '>Previous</button><button type="submit" class="button button-dark" id="saveInterviewAnswerButton">' + (answer ? "Update answer" : "Save answer") + '</button><button type="button" class="button button-light" id="nextInterviewQuestion"' + (selectedInterviewQuestion === questions.length - 1 ? " disabled" : "") + '>Next</button></div></form>'
+    + '<form id="interviewAnswerForm"><div class="interview-answer-heading"><label class="field-label" for="interviewAnswer">Practice your answer</label><div class="interview-voice-controls">' + voiceButton + videoButton + '<span id="interviewRecordingStatus" aria-live="polite">' + safe(voiceStatus) + '</span></div></div><video id="interviewVideoPreview" class="interview-video-preview hidden" autoplay muted playsinline aria-label="Private video practice preview"></video><textarea class="textarea" id="interviewAnswer" rows="9" maxlength="8000" placeholder="Write the answer you would give aloud. Specific examples earn the strongest practice value.">' + safe(answer && answer.answer_text || "") + '</textarea><div class="interview-rating"><label class="field-label" for="interviewRating">How confident did that feel?</label><select class="input" id="interviewRating"><option value="1">1 · I struggled</option><option value="2">2 · Needs work</option><option value="3">3 · Getting there</option><option value="4">4 · Strong</option><option value="5">5 · Ready to say aloud</option></select></div><div class="form-actions"><button type="button" class="button button-light" id="previousInterviewQuestion"' + (selectedInterviewQuestion === 0 ? " disabled" : "") + '>Previous</button><button type="submit" class="button button-dark" id="saveInterviewAnswerButton">' + (answer ? "Update answer" : "Save answer") + '</button><button type="button" class="button button-light" id="nextInterviewQuestion"' + (selectedInterviewQuestion === questions.length - 1 ? " disabled" : "") + '>Next</button></div></form><div id="interviewVideoAssessment"></div>'
     + (answer ? '<section class="interview-coaching"><p class="eyebrow">Answer coaching</p><h3>A structure to rehearse</h3><p>' + safe(question.answer_framework) + '</p><h4>Evidence to bring in</h4><ul>' + question.evidence_prompts.map(function(prompt) { return "<li>" + safe(prompt) + "</li>"; }).join("") + '</ul><div class="interview-sources">Grounded in ' + question.evidence_labels.map(function(label) { return "<span>" + safe(sources.get(label) || label) + "</span>"; }).join("") + "</div></section>" : '<p class="interview-coaching-note">Save an answer to reveal a role-specific structure and evidence prompts.</p>');
   stage.querySelector("#interviewRating").value = String(answer && answer.self_rating || 3);
   stage.querySelectorAll("[data-interview-question]").forEach(function(button) {
@@ -1655,6 +3441,11 @@ function renderInterviewPractice() {
   if (feedbackButton) feedbackButton.onclick = function() { ensureInterviewAssessment(practice.id, true); };
   const recordButton = stage.querySelector("#interviewRecordButton");
   if (recordButton) recordButton.onclick = function() { startInterviewRecording(question); };
+  const videoPracticeButton = stage.querySelector("#interviewVideoButton");
+  if (videoPracticeButton) videoPracticeButton.onclick = function() {
+    startInterviewVideoRecording(question, practice.id, selectedInterviewQuestion);
+  };
+  renderCurrentVideoAssessment();
   const premiumVoiceButton = stage.querySelector("#interviewPremiumVoiceButton");
   if (premiumVoiceButton) premiumVoiceButton.onclick = function() {
     renderMembershipComparison();
@@ -1842,6 +3633,7 @@ function renderProfile() {
   document.getElementById("profileCareerGoal").value = state.profile.careerGoal || "";
   document.getElementById("profileExperience").value = state.profile.experienceLevel || "";
   document.getElementById("profileCountry").value = state.profile.country || "";
+  document.getElementById("profileGuidanceLocale").value = state.profile.guidanceLocale || "en";
   if (!pendingCvUpload) {
     document.getElementById("cvText").value = state.cv.text || "";
     document.getElementById("cvStatus").textContent = state.cv.fileName || (state.cv.text ? "Pasted CV evidence" : "No CV uploaded");
@@ -1889,7 +3681,28 @@ function openPathModal(path) {
   openModal("pathModal");
 }
 
+function ensureJobCvVersionField() {
+  if (document.querySelector("#jobCvVersionLabel")) return;
+  const notes = document.getElementById("jobNotes");
+  const label = document.createElement("label");
+  label.className = "field-label";
+  label.htmlFor = "jobCvVersionLabel";
+  label.textContent = "CV version used ";
+  const optional = document.createElement("span");
+  optional.className = "optional-label";
+  optional.textContent = "optional";
+  label.append(optional);
+  const input = document.createElement("input");
+  input.className = "input";
+  input.id = "jobCvVersionLabel";
+  input.maxLength = 120;
+  input.placeholder = "Platform CV · July 2026";
+  notes.parentElement.insertBefore(label, notes.previousElementSibling);
+  notes.parentElement.insertBefore(input, notes.previousElementSibling);
+}
+
 function openJobModal(jobId, pathId) {
+  ensureJobCvVersionField();
   if (pathId && state.paths.some(function(item) { return item.id === pathId; })) state.activePathId = pathId;
   const path = activePath();
   const job = path && path.jobs.find(function(item) { return item.id === jobId; });
@@ -1905,6 +3718,7 @@ function openJobModal(jobId, pathId) {
   document.getElementById("jobEmploymentType").value = job ? job.employmentType || "" : "";
   document.getElementById("jobWorkArrangement").value = job ? job.workArrangement || "" : "";
   document.getElementById("jobSalaryText").value = job ? job.salaryText || "" : "";
+  document.querySelector("#jobCvVersionLabel").value = job ? job.cvVersionLabel || "" : "";
   document.getElementById("jobDescription").value = job ? job.description : "";
   document.getElementById("jobStatus").value = job ? job.status || "saved" : "saved";
   document.getElementById("jobClosingDate").value = job ? job.closingDate || "" : "";
@@ -2103,16 +3917,18 @@ function downloadJson(payload, fileName) {
 }
 
 async function exportAccount() {
-  if (config.localPreview) {
+  if (config.localPreview || isLocalDemo) {
     downloadJson({
       schema_version: "1.0",
       product: "Orynta",
       exported_at: new Date().toISOString(),
-      local_preview: true,
+      local_preview: Boolean(config.localPreview),
+      local_demo: isLocalDemo,
+      synthetic_data: isLocalDemo,
       workspace: state,
       rag_documents: ragDocuments()
     }, "orynta-account-export.json");
-    toast("Preview account data exported");
+    toast(isLocalDemo ? "Synthetic local account data exported" : "Preview account data exported");
     return;
   }
   if (!cloud || !session) { toast("Sign in before exporting account data"); return; }
@@ -2133,7 +3949,9 @@ async function exportAccount() {
 
 async function extractPdf(file, onProgress) {
   if (!window.pdfjsLib) throw new Error("PDF parser is still loading. Try again.");
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = isLocalDemo
+    ? "/__demo/vendor/pdf.worker.mjs"
+    : "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
   const pages = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
@@ -2277,8 +4095,277 @@ async function openBilling() {
   window.location.assign(result.data.url);
 }
 
-document.querySelectorAll("[data-view]").forEach(function(button) { button.addEventListener("click", function() { setView(button.dataset.view); }); });
+document.querySelectorAll("[data-view]").forEach(function(button) {
+  button.addEventListener("click", function() {
+    setView(button.dataset.view);
+    if (button.dataset.view === "institution") loadInstitutionDashboard(false);
+    if (button.dataset.view === "mentors") loadMentorMatches(false);
+    if (button.dataset.view === "twin" && careerTwinRefreshPending) scheduleCareerTwinRefresh(0);
+  });
+});
 document.querySelectorAll("[data-view-target]").forEach(function(button) { button.addEventListener("click", function() { setView(button.dataset.viewTarget); }); });
+document.getElementById("refreshMentorMatchesButton").addEventListener("click", function() {
+  loadMentorMatches(true);
+});
+document.getElementById("mentorProfileForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const status = document.getElementById("mentorNetworkStatus");
+  if (!cloud || !session || config.localPreview) {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = "Mentor profiles require the connected v2 backend.";
+    return;
+  }
+  const button = this.querySelector('button[type="submit"]');
+  const acceptingMentees = document.getElementById("mentorDiscoveryConsent").checked;
+  button.disabled = true;
+  status.classList.remove("hidden", "is-success");
+  status.textContent = acceptingMentees ? "Saving your mentor profile and discovery consent…" : "Returning your mentor profile to private…";
+  try {
+    const result = await cloud.functions.invoke("mentor-network", {
+      body: {
+        action: "profile",
+        profile: {
+          mentorType: document.getElementById("mentorType").value,
+          headline: document.getElementById("mentorHeadline").value.trim(),
+          biography: document.getElementById("mentorBiography").value.trim(),
+          industries: mentorProfileList(document.getElementById("mentorIndustries").value),
+          skills: mentorProfileList(document.getElementById("mentorSkills").value),
+          locations: mentorProfileList(document.getElementById("mentorLocations").value),
+          languages: mentorProfileList(document.getElementById("mentorLanguages").value),
+          experienceLevels: mentorProfileList(document.getElementById("mentorExperienceLevels").value),
+          maximumActiveMentees: Number(document.getElementById("mentorCapacity").value),
+          acceptingMentees: acceptingMentees
+        }
+      }
+    });
+    if (result.error) throw result.error;
+    mentorNetworkState.profile = result.data && result.data.profile || null;
+    mentorNetworkState.profileLoaded = true;
+    renderMentorProfile();
+    status.classList.add("is-success");
+    status.textContent = acceptingMentees
+      ? "Your mentor profile is discoverable with explicit consent."
+      : "Your mentor profile is private and new suggestions were removed.";
+  } catch (error) {
+    status.classList.remove("is-success");
+    status.textContent = await functionErrorMessage(error, "Your mentor profile could not be saved.");
+  } finally {
+    button.disabled = false;
+  }
+});
+document.getElementById("refreshInstitutionButton").addEventListener("click", function() {
+  loadInstitutionDashboard(true);
+});
+document.getElementById("institutionOrganizationSelect").addEventListener("change", function() {
+  institutionState.organizationId = this.value;
+  institutionState.cohortId = "";
+  institutionState.dashboard = null;
+  institutionState.workforce = null;
+  institutionState.cohorts = [];
+  loadInstitutionDashboard(false);
+});
+document.getElementById("institutionCohortSelect").addEventListener("change", function() {
+  institutionState.cohortId = this.value;
+  institutionState.dashboard = null;
+  institutionState.workforce = null;
+  loadInstitutionDashboard(false);
+});
+document.getElementById("institutionConsentList").addEventListener("click", async function(event) {
+  const button = event.target.closest("[data-institution-consent]");
+  if (!button || !cloud || !session || config.localPreview) return;
+  const currentlyGranted = button.dataset.granted === "true";
+  button.disabled = true;
+  try {
+    const result = await cloud.functions.invoke("institution-dashboard", {
+      body: {
+        action: "set_consent",
+        organizationId: button.dataset.institutionConsent,
+        granted: !currentlyGranted,
+        scopes: currentlyGranted ? [] : ["cohort_analytics"]
+      }
+    });
+    if (result.error) throw result.error;
+    institutionState.loaded = false;
+    institutionState.dashboard = null;
+    await loadInstitutionDashboard(true);
+    toast(currentlyGranted ? "Institutional analytics consent withdrawn" : "Institutional analytics consent granted");
+  } catch (error) {
+    button.disabled = false;
+    toast(await functionErrorMessage(error, "Your consent choice could not be saved."));
+  }
+});
+document.getElementById("careerGraphFilter").addEventListener("change", function() {
+  careerGraphFilter = this.value;
+  selectedCareerGraphNodeId = "";
+  renderCareerGraph(state.careerOperatingSystem || emptyCareerOperatingSystem());
+});
+[
+  "labourMarketCountry",
+  "labourMarketCity",
+  "labourMarketIndustry",
+  "labourMarketJobFamily",
+  "labourMarketExperience"
+].forEach(function(id) {
+  document.getElementById(id).addEventListener("change", renderLabourMarketDashboard);
+});
+document.getElementById("careerGuidanceLocale").addEventListener("change", async function() {
+  state.profile.guidanceLocale = this.value === "ar" ? "ar" : "en";
+  await saveState();
+  renderCareerOperatingSystem();
+  toast(state.profile.guidanceLocale === "ar" ? "تم تحديث لغة الإرشاد" : "Guidance language updated");
+});
+document.getElementById("refreshCareerTwinButton").addEventListener("click", async function() {
+  const status = document.getElementById("careerTwinStatus");
+  if (!cloud || !session || config.localPreview) {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = "Career Twin refresh requires the connected v2 backend.";
+    return;
+  }
+  const original = this.textContent;
+  this.disabled = true;
+  this.textContent = "Refreshing…";
+  status.classList.remove("hidden", "is-success");
+  status.textContent = "Connecting your profile, roles, evidence, applications, interviews, and completed actions…";
+  try {
+    const result = await cloud.functions.invoke("career-intelligence", { body: { action: "refresh" } });
+    if (result.error) throw result.error;
+    await loadCareerOperatingSystem();
+    careerTwinRefreshPending = false;
+    lastCareerTwinSourceSignature = careerTwinSourceSignature(state);
+    renderCareerOperatingSystem();
+    status.classList.add("is-success");
+    status.textContent = result.data && result.data.replayed
+      ? "Your Career Twin was already current."
+      : "Your Career Twin and explainable recommendations are now current.";
+  } catch (error) {
+    status.textContent = await functionErrorMessage(error, "Your Career Twin could not be refreshed.");
+  } finally {
+    this.disabled = false;
+    this.textContent = original;
+  }
+});
+document.getElementById("portfolioAssetForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const status = document.getElementById("portfolioIntelligenceStatus");
+  if (!cloud || !session || config.localPreview) {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = "Portfolio intelligence requires the connected v2 backend.";
+    return;
+  }
+  const url = document.getElementById("portfolioRepositoryUrl").value.trim();
+  let parsed;
+  try { parsed = new URL(url); } catch (_error) { parsed = null; }
+  if (!parsed || parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "github.com") {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = "Enter a public https://github.com/owner/repository URL.";
+    return;
+  }
+  const coordinates = parsed.pathname.split("/").filter(Boolean).slice(0, 2);
+  const button = this.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await cloud.from("portfolio_assets").insert({
+      user_id: session.user.id,
+      provider: "github",
+      external_id: coordinates.join("/").toLowerCase(),
+      title: coordinates[1] || "GitHub repository",
+      url: url,
+      visibility: "public"
+    }).select("*").single();
+    if (result.error) throw result.error;
+    state.portfolioAssets.unshift(result.data);
+    lastCareerTwinSourceSignature = careerTwinSourceSignature(state);
+    scheduleCareerTwinRefresh();
+    this.reset();
+    renderPortfolioIntelligence();
+    const analyseButton = document.querySelector('[data-analyse-portfolio="' + result.data.id + '"]');
+    if (analyseButton) await runPortfolioAction("analyse_portfolio", result.data.id, analyseButton);
+  } catch (error) {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = error.message || "The repository could not be added.";
+  } finally {
+    button.disabled = false;
+  }
+});
+document.getElementById("careerCredentialForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const status = document.getElementById("portfolioIntelligenceStatus");
+  if (!cloud || !session || config.localPreview) {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = "Credential intelligence requires the connected v2 backend.";
+    return;
+  }
+  const url = document.getElementById("credentialUrl").value.trim();
+  const button = this.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await cloud.from("career_credentials").insert({
+      user_id: session.user.id,
+      provider: document.getElementById("credentialProvider").value,
+      external_id: url,
+      name: document.getElementById("credentialName").value.trim(),
+      issuer: document.getElementById("credentialIssuer").value.trim(),
+      credential_url: url
+    }).select("*").single();
+    if (result.error) throw result.error;
+    state.careerCredentials.unshift(result.data);
+    lastCareerTwinSourceSignature = careerTwinSourceSignature(state);
+    scheduleCareerTwinRefresh();
+    this.reset();
+    renderPortfolioIntelligence();
+    status.classList.remove("hidden");
+    status.classList.add("is-success");
+    status.textContent = "Credential added. Run source verification when the issuer exposes a machine-readable assertion.";
+  } catch (error) {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = error.message || "The credential could not be added.";
+  } finally {
+    button.disabled = false;
+  }
+});
+document.getElementById("careerSimulationForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  const status = document.getElementById("careerPlanningStatus");
+  if (!cloud || !session || config.localPreview) {
+    status.classList.remove("hidden", "is-success");
+    status.textContent = "Career simulations require the connected v2 backend.";
+    return;
+  }
+  const submit = this.querySelector('button[type="submit"]');
+  const original = submit.textContent;
+  submit.disabled = true;
+  submit.textContent = "Simulating…";
+  status.classList.remove("hidden", "is-success");
+  status.textContent = "Comparing this scenario with your Career Twin, saved jobs, verified evidence, and sourced market observations…";
+  try {
+    const type = document.getElementById("careerSimulationType").value;
+    const result = await cloud.functions.invoke("career-planning", {
+      body: {
+        action: "simulate",
+        scenario: {
+          type: type,
+          subject: document.getElementById("careerSimulationSubject").value.trim(),
+          destination: document.getElementById("careerSimulationDestination").value || undefined,
+          weeklyHours: Number(document.getElementById("careerSimulationHours").value || 6),
+          months: type === "learning_period" ? 6 : undefined,
+          projectCount: type === "projects" ? 3 : undefined
+        }
+      }
+    });
+    if (result.error) throw result.error;
+    await loadCareerOperatingSystem();
+    renderCareerOperatingSystem();
+    status.classList.add("is-success");
+    status.textContent = result.data && result.data.replayed
+      ? "This scenario was already current."
+      : "Your readiness assessment, projection, and adaptive roadmap are ready.";
+  } catch (error) {
+    status.textContent = await functionErrorMessage(error, "The career simulation could not be completed.");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = original;
+  }
+});
 document.getElementById("nextActionButton").addEventListener("click", function() { runOverviewAction(this.dataset.action); });
 document.getElementById("applicationSearch").addEventListener("input", function() {
   applicationSearch = this.value.trim();
@@ -2586,10 +4673,22 @@ document.getElementById("analyzeButton").addEventListener("click", async functio
   }, 5000));
   try {
     await saveQueue;
-    const result = await cloud.functions.invoke("analyze-career", {
-      headers: { "x-request-id": requestId },
-      body: { requestId: requestId, pathId: path.id, targetRole: path.target, documents: ragDocuments() }
-    });
+    const result = isLocalDemo
+      ? await (async function() {
+        const response = await fetch(config.localDemoApi + "/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+          body: JSON.stringify({ requestId: requestId, pathId: path.id, targetRole: path.target })
+        });
+        const data = await response.json();
+        return response.ok
+          ? { data: data, error: null }
+          : { data: data, error: new Error(data.error || "Local analysis failed") };
+      })()
+      : await cloud.functions.invoke("analyze-career", {
+        headers: { "x-request-id": requestId },
+        body: { requestId: requestId, pathId: path.id, targetRole: path.target, documents: ragDocuments() }
+      });
     if (result.error) throw result.error;
     if (result.data.access) {
       accountAccess.rag_used = result.data.access.used;
@@ -2649,7 +4748,25 @@ document.getElementById("importJobButton").addEventListener("click", async funct
   this.disabled = true;
   status.textContent = "Importing…";
   try {
-    const result = await cloud.functions.invoke("import-job", { body: { url: url } });
+    const result = isLocalDemo ? {
+      error: null,
+      data: {
+        job: {
+          title: "Synthetic Imported Platform Engineer",
+          company: "Local Demo Company",
+          location: "Berlin · Hybrid",
+          description: "Synthetic local listing requiring Python, PostgreSQL, Docker, Kubernetes, CI/CD, Azure and observability. No external page was fetched.",
+          sourceUrl: "https://example.invalid/jobs/imported-demo",
+          sourceProvider: "synthetic-local",
+          externalJobId: "ORYNTA-DEMO-IMPORT",
+          closingDate: new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10),
+          employmentType: "Full-time",
+          workArrangement: "Hybrid",
+          salaryText: "€80,000–€94,000",
+          importMetadata: { method: "local_demo_fixture", synthetic: true }
+        }
+      }
+    } : await cloud.functions.invoke("import-job", { body: { url: url } });
     if (result.error || !result.data?.job) throw result.error || new Error(result.data?.error || "Import failed");
     const job = result.data.job;
     document.getElementById("jobTitle").value = job.title;
@@ -2699,6 +4816,7 @@ document.getElementById("jobForm").addEventListener("submit", function(event) {
     employmentType: document.getElementById("jobEmploymentType").value.trim(),
     workArrangement: document.getElementById("jobWorkArrangement").value.trim(),
     salaryText: document.getElementById("jobSalaryText").value.trim(),
+    cvVersionLabel: document.querySelector("#jobCvVersionLabel").value.trim(),
     importMetadata: (function() {
       try { return JSON.parse(document.getElementById("jobImportMetadata").value || "{}"); }
       catch (_error) { return {}; }
@@ -2900,7 +5018,24 @@ document.getElementById("generateCvGuidanceButton").addEventListener("click", as
   this.textContent = "Generating…";
   try {
     await saveQueue;
-    const result = await cloud.functions.invoke("cv-guidance", { body: { jobId: jobId } });
+    const result = isLocalDemo ? {
+      error: null,
+      data: {
+        guidance: {
+          id: crypto.randomUUID(),
+          user_id: session.user.id,
+          path_id: activePath().id,
+          job_id: jobId,
+          summary: "Deterministic local guidance: lead with measured backend delivery and label Azure and Kubernetes evidence precisely.",
+          suggestions: [
+            { section: "Summary", recommendation: "Lead with the 60% release-time improvement.", reason: "It is measurable and directly relevant." },
+            { section: "Projects", recommendation: "Add the local platform case study and state its non-production scope.", reason: "It demonstrates progress without overstating experience." }
+          ],
+          model: "local-demo-deterministic-v1",
+          created_at: new Date().toISOString()
+        }
+      }
+    } : await cloud.functions.invoke("cv-guidance", { body: { jobId: jobId } });
     if (result.error || !result.data?.guidance) throw result.error || new Error("Guidance failed");
     state.cvGuidance.unshift(result.data.guidance);
     renderCvGuidance(result.data.guidance);
@@ -2988,6 +5123,7 @@ document.getElementById("profileForm").addEventListener("submit", async function
   state.profile.careerGoal = document.getElementById("profileCareerGoal").value.trim();
   state.profile.experienceLevel = document.getElementById("profileExperience").value;
   state.profile.country = document.getElementById("profileCountry").value.trim();
+  state.profile.guidanceLocale = document.getElementById("profileGuidanceLocale").value;
   message.textContent = "Saving…";
   try {
     if (cloud && session) {
@@ -3054,6 +5190,16 @@ document.getElementById("clearWorkspaceButton").addEventListener("click", async 
       if (paths.length) {
         const removal = await cloud.storage.from("private-cvs").remove(paths);
         if (removal.error) throw removal.error;
+      }
+      for (const table of [
+        "learning_roadmap_milestones", "learning_roadmaps", "career_simulations",
+        "career_readiness_assessments", "career_credentials", "portfolio_assets",
+        "mentor_matches", "company_intelligence_briefs", "interview_video_assessments",
+        "career_recommendations", "career_twin_snapshots", "career_twins",
+        "career_graph_edges", "career_graph_nodes"
+      ]) {
+        const intelligenceDeletion = await cloud.from(table).delete().eq("user_id", session.user.id);
+        if (intelligenceDeletion.error) throw intelligenceDeletion.error;
       }
       const analysisDeletion = await cloud.from("career_analyses").delete().eq("user_id", session.user.id);
       if (analysisDeletion.error) throw analysisDeletion.error;
@@ -3192,6 +5338,41 @@ async function initializeCloud() {
       window.setTimeout(function() { refreshAccountAccess().catch(function() {}); }, 1000);
     }
   }
+}
+
+if (isLocalDemo) {
+  document.getElementById("localDemoControls").classList.remove("hidden");
+  document.getElementById("resetDemoButton").addEventListener("click", async function() {
+    if (!session) { toast("Sign in to the demo account before resetting"); return; }
+    this.disabled = true;
+    this.textContent = "Resetting…";
+    try {
+      const response = await fetch(config.localDemoApi + "/reset", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + session.access_token }
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Demo reset failed");
+      await cloud.auth.signOut({ scope: "local" });
+      const login = await cloud.auth.signInWithPassword({
+        email: "demo@orynta.local",
+        password: "OryntaDemo2026!"
+      });
+      if (login.error) throw login.error;
+      session = login.data.session;
+      await loadCloudState();
+      cloudReady = true;
+      setView("overview");
+      render();
+      localStorage.removeItem(STORAGE_KEY + ":preview");
+      toast("Demo data restored");
+    } catch (error) {
+      toast(error.message || "Demo data could not be reset");
+    } finally {
+      this.disabled = false;
+      this.textContent = "Reset demo data";
+    }
+  });
 }
 
 initializeCloud().catch(function(error) {

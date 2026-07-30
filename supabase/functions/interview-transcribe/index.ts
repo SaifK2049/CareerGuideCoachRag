@@ -10,7 +10,10 @@ class TranscriptionError extends Error {
 }
 
 const maxAudioBytes = 10 * 1024 * 1024;
-const supportedTypes = ["audio/webm", "audio/mp4", "audio/mpeg", "audio/wav", "audio/x-wav", "audio/mpga", "audio/m4a"];
+const supportedTypes = [
+  "audio/webm", "audio/mp4", "audio/mpeg", "audio/wav", "audio/x-wav", "audio/mpga", "audio/m4a",
+  "video/webm", "video/mp4",
+];
 
 Deno.serve(async (request) => {
   const startedAt = Date.now();
@@ -74,7 +77,7 @@ Deno.serve(async (request) => {
     }
 
     const openAiForm = new FormData();
-    openAiForm.append("file", audio, audio.name || (mediaType.includes("mp4") ? "answer.m4a" : "answer.webm"));
+    openAiForm.append("file", audio, audio.name || (mediaType.includes("mp4") ? "answer.mp4" : "answer.webm"));
     telemetryModel = Deno.env.get("OPENAI_TRANSCRIPTION_MODEL") || "gpt-4o-mini-transcribe";
     openAiForm.append("model", telemetryModel);
     openAiForm.append("response_format", "json");

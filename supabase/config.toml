@@ -515,3 +515,51 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/admin-analytics/deno.json"
 entrypoint = "./functions/admin-analytics/index.ts"
+
+[functions.career-intelligence]
+enabled = true
+verify_jwt = true
+import_map = "./functions/career-intelligence/deno.json"
+entrypoint = "./functions/career-intelligence/index.ts"
+
+[functions.career-planning]
+enabled = true
+verify_jwt = true
+import_map = "./functions/career-planning/deno.json"
+entrypoint = "./functions/career-planning/index.ts"
+
+[functions.institution-dashboard]
+enabled = true
+verify_jwt = true
+import_map = "./functions/institution-dashboard/deno.json"
+entrypoint = "./functions/institution-dashboard/index.ts"
+
+[functions.mentor-network]
+enabled = true
+verify_jwt = true
+import_map = "./functions/mentor-network/deno.json"
+entrypoint = "./functions/mentor-network/index.ts"
+
+[functions.company-intelligence]
+enabled = true
+verify_jwt = true
+import_map = "./functions/company-intelligence/deno.json"
+entrypoint = "./functions/company-intelligence/index.ts"
+
+[functions.interview-video-assess]
+enabled = true
+verify_jwt = true
+import_map = "./functions/interview-video-assess/deno.json"
+entrypoint = "./functions/interview-video-assess/index.ts"
+
+[functions.portfolio-intelligence]
+enabled = true
+verify_jwt = true
+import_map = "./functions/portfolio-intelligence/deno.json"
+entrypoint = "./functions/portfolio-intelligence/index.ts"
+
+[functions.labour-market-ingest]
+enabled = true
+verify_jwt = true
+import_map = "./functions/labour-market-ingest/deno.json"
+entrypoint = "./functions/labour-market-ingest/index.ts"

@@ -100,22 +100,26 @@
         <nav class="primary-nav" aria-label="Primary navigation">
           <div class="nav-group"><p>Understand</p>
             <button class="nav-item is-active" data-view="overview"><span class="nav-icon" aria-hidden="true">⌂</span>Overview</button>
+            <button class="nav-item" data-view="twin"><span class="nav-icon" aria-hidden="true">◎</span>Career Twin</button>
             <button class="nav-item" data-view="paths"><span class="nav-icon" aria-hidden="true">↗</span>Role match</button>
             <button class="nav-item" data-view="knowledge"><span class="nav-icon" aria-hidden="true">≡</span>Skill gaps</button>
           </div>
           <div class="nav-group"><p>Prepare</p>
             <button class="nav-item" data-view="plan"><span class="nav-icon" aria-hidden="true">✓</span>Career plan</button>
             <button class="nav-item" data-view="interview"><span class="nav-icon" aria-hidden="true">◇</span>Interview prep</button>
+            <button class="nav-item" data-view="mentors"><span class="nav-icon" aria-hidden="true">♧</span>Mentors</button>
           </div>
           <div class="nav-group"><p>Track</p>
             <button class="nav-item" data-view="applications"><span class="nav-icon" aria-hidden="true">▦</span>Applications</button>
             <button class="nav-item" data-view="progress"><span class="nav-icon" aria-hidden="true">◫</span>Reports</button>
+            <button class="nav-item" data-view="institution"><span class="nav-icon" aria-hidden="true">▥</span>Institution</button>
           </div>
           <div class="nav-group nav-group-profile"><p>Profile</p>
             <button class="nav-item" data-view="profile"><span class="nav-icon" aria-hidden="true">▤</span>Your CV</button>
           </div>
         </nav>
         <div class="sidebar-bottom">
+          <div class="local-demo-controls hidden" id="localDemoControls"><span>Local demo</span><button class="text-button" id="resetDemoButton" type="button">Reset demo data</button></div>
           <div class="storage-status"><span class="status-dot"></span><div><strong>Private workspace</strong><span>Saved in this browser</span></div></div>
           <button class="text-button" id="feedbackButton">Send beta feedback <span>↗</span></button>
           <button class="text-button" id="exportButton">Export account data <span>↗</span></button>
@@ -161,6 +165,88 @@
           <section class="panel jobs-panel"><div class="section-heading"><div><p class="eyebrow">Your evidence set</p><h3>Recent job entries</h3></div><button class="button button-light" data-view-target="paths">View all jobs <span>→</span></button></div><div id="recentJobs" class="job-table"></div></section>
         </section>
 
+        <section class="view" id="twinView">
+          <div class="page-intro">
+            <div><p class="eyebrow">Career intelligence</p><h2>Your Career Twin</h2><p>A living model of your direction, evidence, applications, interview performance, and completed work.</p></div>
+            <div class="twin-header-actions"><label class="field-label" for="careerGuidanceLocale">Guidance language<select class="input compact-input" id="careerGuidanceLocale"><option value="en">English</option><option value="ar">العربية</option></select></label><button class="button button-dark" id="refreshCareerTwinButton">Refresh Career Twin</button></div>
+          </div>
+          <div id="careerTwinStatus" class="analysis-status hidden" role="status" aria-live="polite"></div>
+          <div class="twin-metrics">
+            <article class="stat-block"><span class="stat-label">Twin confidence</span><strong id="careerTwinConfidence">0%</strong><span class="stat-foot">based on source coverage</span></article>
+            <article class="stat-block"><span class="stat-label">Knowledge nodes</span><strong id="careerGraphNodeCount">0</strong><span class="stat-foot">connected career entities</span></article>
+            <article class="stat-block"><span class="stat-label">Relationships</span><strong id="careerGraphEdgeCount">0</strong><span class="stat-foot">evidence-backed links</span></article>
+            <article class="stat-block"><span class="stat-label">Active recommendations</span><strong id="careerRecommendationCount">0</strong><span class="stat-foot">with an evidence chain</span></article>
+          </div>
+          <section class="panel twin-summary-panel">
+            <div class="section-heading"><div><p class="eyebrow">Current model</p><h3 id="careerTwinTrajectory">Build your Career Twin</h3></div><span id="careerTwinUpdated" class="file-status">Not generated</span></div>
+            <p id="careerTwinSummary" class="twin-summary-copy">Refresh your Career Twin after adding a CV, target role, job, or evidence.</p>
+          </section>
+          <div class="twin-insight-grid">
+            <section class="panel"><div class="section-heading"><div><p class="eyebrow">Supported</p><h3>Technical strengths</h3></div></div><div id="careerTwinStrengths" class="twin-insight-list"></div></section>
+            <section class="panel"><div class="section-heading"><div><p class="eyebrow">Develop</p><h3>Missing competencies</h3></div></div><div id="careerTwinGaps" class="twin-insight-list"></div></section>
+            <section class="panel"><div class="section-heading"><div><p class="eyebrow">Observed</p><h3>Behavioural strengths</h3></div></div><div id="careerTwinBehaviours" class="twin-insight-list"></div></section>
+            <section class="panel"><div class="section-heading"><div><p class="eyebrow">Direction</p><h3>Preferred industries</h3></div></div><div id="careerTwinIndustries" class="twin-insight-list"></div></section>
+          </div>
+          <section class="panel career-planning-panel">
+            <div class="section-heading"><div><p class="eyebrow">Future planner</p><h3>Simulate your next career move</h3></div><strong id="careerReadinessScore" class="planning-score">Not assessed</strong></div>
+            <p class="muted-copy">Compare a skill, certification, move, learning period, or project plan against your current Career Twin. Projections remain directional unless supported by cited market observations.</p>
+            <form id="careerSimulationForm" class="career-simulation-form">
+              <div><label class="field-label" for="careerSimulationType">Scenario</label><select class="input" id="careerSimulationType"><option value="skill">Learn a skill</option><option value="certification">Complete a certification</option><option value="mobility">Move country</option><option value="learning_period">Focused learning period</option><option value="projects">Complete projects</option></select></div>
+              <div><label class="field-label" for="careerSimulationSubject">Skill, credential, or goal</label><input class="input" id="careerSimulationSubject" maxlength="240" required placeholder="Kubernetes" /></div>
+              <div><label class="field-label" for="careerSimulationDestination">Destination <span class="optional-label">optional</span></label><select class="input" id="careerSimulationDestination"><option value="">Current market</option><option value="DE">Germany</option><option value="NL">Netherlands</option><option value="SE">Sweden</option><option value="AE">UAE</option><option value="SA">Saudi Arabia</option><option value="QA">Qatar</option><option value="JO">Jordan</option><option value="EG">Egypt</option></select></div>
+              <div><label class="field-label" for="careerSimulationHours">Hours per week</label><input class="input" id="careerSimulationHours" type="number" min="1" max="80" value="6" required /></div>
+              <button type="submit" class="button button-dark">Run simulation</button>
+            </form>
+            <div id="careerPlanningStatus" class="analysis-status hidden" role="status" aria-live="polite"></div>
+            <div id="careerReadinessCategories" class="readiness-category-grid"></div>
+            <div id="careerSimulationResult" class="career-simulation-result"></div>
+          </section>
+          <section class="panel portfolio-intelligence-panel">
+            <div class="section-heading"><div><p class="eyebrow">Portfolio intelligence</p><h3>Projects and verified credentials</h3></div><span class="file-status">Evidence, not popularity</span></div>
+            <p class="muted-copy">Analyse public GitHub repository signals and keep credentials tied to their original issuer. Repository scores describe the visible project—not your ability or hiring likelihood.</p>
+            <div class="portfolio-entry-grid">
+              <form id="portfolioAssetForm" class="portfolio-entry-form">
+                <div><label class="field-label" for="portfolioRepositoryUrl">Public GitHub repository</label><input class="input" id="portfolioRepositoryUrl" type="url" required maxlength="1000" placeholder="https://github.com/owner/repository" /></div>
+                <button type="submit" class="button button-dark">Add and analyse</button>
+              </form>
+              <form id="careerCredentialForm" class="portfolio-entry-form">
+                <div><label class="field-label" for="credentialName">Credential</label><input class="input" id="credentialName" required maxlength="300" placeholder="AWS Solutions Architect – Associate" /></div>
+                <div><label class="field-label" for="credentialIssuer">Issuer</label><input class="input" id="credentialIssuer" required maxlength="240" placeholder="Amazon Web Services" /></div>
+                <div><label class="field-label" for="credentialProvider">Provider</label><select class="input" id="credentialProvider"><option value="open_badges">Open Badges</option><option value="credly">Credly</option><option value="microsoft_learn">Microsoft Learn</option><option value="aws">AWS</option><option value="google_cloud">Google Cloud</option><option value="cisco">Cisco</option><option value="azure">Azure</option><option value="manual">Manual</option></select></div>
+                <div><label class="field-label" for="credentialUrl">Public credential URL</label><input class="input" id="credentialUrl" type="url" required maxlength="1000" placeholder="https://issuer.example/assertion.json" /></div>
+                <button type="submit" class="button button-light">Add credential</button>
+              </form>
+            </div>
+            <div id="portfolioIntelligenceStatus" class="analysis-status hidden" role="status" aria-live="polite"></div>
+            <div class="portfolio-intelligence-grid"><div><h4>Project reports</h4><div id="portfolioAssetList" class="portfolio-record-list"></div></div><div><h4>Credentials</h4><div id="careerCredentialList" class="portfolio-record-list"></div></div></div>
+          </section>
+          <section class="panel labour-market-panel">
+            <div class="section-heading"><div><p class="eyebrow">Labour-market intelligence</p><h3>Explore sourced EMEA signals</h3></div><span id="labourMarketFreshness" class="file-status">No observations loaded</span></div>
+            <div class="labour-market-filters">
+              <div><label class="field-label" for="labourMarketCountry">Country</label><select class="input compact-input" id="labourMarketCountry"><option value="">All countries</option></select></div>
+              <div><label class="field-label" for="labourMarketCity">City</label><select class="input compact-input" id="labourMarketCity"><option value="">All cities</option></select></div>
+              <div><label class="field-label" for="labourMarketIndustry">Industry</label><select class="input compact-input" id="labourMarketIndustry"><option value="">All industries</option></select></div>
+              <div><label class="field-label" for="labourMarketJobFamily">Job family</label><select class="input compact-input" id="labourMarketJobFamily"><option value="">All job families</option></select></div>
+              <div><label class="field-label" for="labourMarketExperience">Experience</label><select class="input compact-input" id="labourMarketExperience"><option value="">All levels</option></select></div>
+            </div>
+            <div id="labourMarketDashboard" class="labour-market-dashboard"></div>
+          </section>
+          <section class="panel career-graph-panel">
+            <div class="section-heading">
+              <div><p class="eyebrow">Knowledge graph</p><h3>Explore your connected career evidence</h3></div>
+              <label class="graph-filter-label" for="careerGraphFilter"><span>Node type</span><select class="input compact-input" id="careerGraphFilter"><option value="all">All entities</option></select></label>
+            </div>
+            <div class="career-graph-layout">
+              <div id="careerGraphCanvas" class="career-graph-canvas" aria-label="Interactive career knowledge graph"></div>
+              <aside id="careerGraphDetails" class="career-graph-details"><strong>Select a node</strong><p>Choose an entity to inspect its relationships and supporting evidence.</p></aside>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="section-heading"><div><p class="eyebrow">Explainable guidance</p><h3>Why each next move matters</h3></div></div>
+            <div id="careerRecommendationList" class="career-recommendation-list"></div>
+          </section>
+        </section>
+
         <section class="view" id="pathsView">
           <div class="page-intro"><div><p class="eyebrow">Role match</p><h2>Career directions</h2><p>See how your experience maps to the roles you want next.</p></div><button class="button button-dark" data-open-modal="pathModal"><span>＋</span> Add a target role</button></div>
           <div class="paths-layout"><div id="pathList" class="path-list"></div><section class="panel path-detail-panel"><div class="section-heading"><div><p class="eyebrow">Selected path</p><h3 id="pathDetailName">Cloud Platform Engineering</h3></div><button class="button button-light" data-open-modal="jobModal">Add job <span>＋</span></button></div><p id="pathDetailDescription" class="muted-copy"></p><div class="path-detail-meta"><span id="pathDetailTarget"></span><span id="pathDetailCount"></span></div><div id="pathJobs" class="job-table path-jobs"></div></section></div>
@@ -174,6 +260,16 @@
             <article class="stat-block"><span class="stat-label">Interviews ahead</span><strong id="applicationInterviewStat">0</strong><span class="stat-foot">scheduled</span></article>
             <article class="stat-block"><span class="stat-label">Offers</span><strong id="applicationOfferStat">0</strong><span class="stat-foot">in your pipeline</span></article>
           </div>
+          <section class="panel application-intelligence">
+            <div class="section-heading"><div><p class="eyebrow">Application intelligence</p><h3>What your pipeline is teaching you</h3></div><span id="applicationAnalyticsWindow">All recorded activity</span></div>
+            <div class="application-intelligence-metrics">
+              <article><span>Response rate</span><strong id="applicationResponseRate">—</strong><small>interview, offer, or rejection after applying</small></article>
+              <article><span>Interview conversion</span><strong id="applicationInterviewConversion">—</strong><small>applications reaching interview</small></article>
+              <article><span>Offer conversion</span><strong id="applicationOfferConversion">—</strong><small>applications becoming offers</small></article>
+              <article><span>Application velocity</span><strong id="applicationVelocity">—</strong><small>submitted in the last 30 days</small></article>
+            </div>
+            <div id="applicationIntelligenceInsights" class="application-intelligence-insights"></div>
+          </section>
           <section class="panel cockpit-today"><div class="section-heading"><div><p class="eyebrow">Today</p><h3>Your priority queue</h3></div><span id="applicationTodayCount">0 items</span></div><div id="applicationTodayList" class="cockpit-today-list"></div></section>
           <div class="cockpit-toolbar">
             <div><label class="field-label" for="applicationSearch">Search applications</label><input class="input" id="applicationSearch" type="search" placeholder="Role or company" /></div>
@@ -183,7 +279,7 @@
         </section>
 
         <section class="view" id="interviewView">
-          <div class="page-intro"><div><p class="eyebrow">Interview preparation</p><h2>Practise for the job you want</h2><p>Build truthful answers from your CV, saved evidence, and the role’s actual requirements.</p></div></div>
+          <div class="page-intro"><div><p class="eyebrow">Interview preparation</p><h2>Practice for the job you want</h2><p>Build truthful answers from your CV, saved evidence, and the role’s actual requirements.</p></div></div>
           <section class="panel interview-scorebar" aria-label="Practice progress" hidden>
             <div><span>Level</span><strong id="interviewLevel">1</strong></div>
             <div class="interview-xp"><span id="interviewXpLabel">0 XP · 100 to next level</span><div class="meter-track"><span id="interviewXpBar"></span></div></div>
@@ -195,6 +291,8 @@
               <label class="field-label" for="interviewJobSelect">Saved opportunity</label>
               <select class="input" id="interviewJobSelect"></select>
               <button class="button button-dark button-full" id="generateInterviewButton">Generate 6 questions</button>
+              <button class="button button-light button-full" id="generateCompanyBriefButton">Build company briefing</button>
+              <div id="companyBriefResult" class="company-brief-result"></div>
               <p class="interview-allowance" id="interviewAllowance">Free includes one practice set each month.</p>
               <div class="interview-history-head"><h3>Previous rounds</h3><span id="interviewSessionCount">0</span></div>
               <div id="interviewSessionList" class="interview-session-list"></div>
@@ -207,6 +305,51 @@
               <div class="empty-state empty-state-action"><strong>No practice round selected</strong><p>Choose a saved job and generate a focused set of interview questions.</p></div>
             </section>
           </div>
+        </section>
+
+        <section class="view" id="institutionView">
+          <div class="page-intro"><div><p class="eyebrow">Institutional outcomes</p><h2>Cohort employability</h2><p>Consent-aware, privacy-thresholded insight for universities, workforce programmes, and government initiatives.</p></div><button class="button button-light" id="refreshInstitutionButton">Refresh dashboard</button></div>
+          <div id="institutionStatus" class="analysis-status hidden" role="status" aria-live="polite"></div>
+          <section class="panel institution-consent-panel">
+            <div class="section-heading"><div><p class="eyebrow">Your data choices</p><h3>Institutional analytics consent</h3></div></div>
+            <p class="institution-consent-copy">You decide whether each organization may include your data in privacy-thresholded cohort analytics. You can withdraw at any time; institutions never receive individual records from this dashboard.</p>
+            <div id="institutionConsentList" class="institution-consent-list"></div>
+          </section>
+          <div class="institution-toolbar">
+            <div><label class="field-label" for="institutionOrganizationSelect">Organization</label><select class="input" id="institutionOrganizationSelect"><option value="">No organization access</option></select></div>
+            <div><label class="field-label" for="institutionCohortSelect">Cohort</label><select class="input" id="institutionCohortSelect"><option value="">All cohorts</option></select></div>
+          </div>
+          <section id="institutionPrivacyPanel" class="panel institution-privacy-panel">
+            <strong>Institutional analytics are privacy protected</strong>
+            <p>Only participants with active cohort-analytics consent are included. Results are suppressed below five participants.</p>
+          </section>
+          <div id="institutionDashboardContent" class="institution-dashboard-content"></div>
+        </section>
+
+        <section class="view" id="mentorsView">
+          <div class="page-intro"><div><p class="eyebrow">Mentor network</p><h2>People who can help with the next move</h2><p>Explainable matches across career goals, skills, industry, location, language, and experience.</p></div><button class="button button-dark" id="refreshMentorMatchesButton">Refresh matches</button></div>
+          <div id="mentorNetworkStatus" class="analysis-status hidden" role="status" aria-live="polite"></div>
+          <section class="panel mentor-network-note"><strong>Mentors opt in before they appear</strong><p>Orynta only matches profiles that are accepting mentees and have explicitly enabled network discovery.</p></section>
+          <details class="panel mentor-profile-panel" id="mentorProfilePanel">
+            <summary><strong>Offer mentorship</strong><span id="mentorProfileState">Private by default</span></summary>
+            <form id="mentorProfileForm">
+              <div class="mentor-profile-grid">
+                <div><label class="field-label" for="mentorType">Mentor type</label><select class="input" id="mentorType"><option value="alumni">Alumni</option><option value="industry_professional">Industry professional</option><option value="recruiter">Recruiter</option><option value="career_coach">Career coach</option></select></div>
+                <div><label class="field-label" for="mentorHeadline">Headline</label><input class="input" id="mentorHeadline" minlength="2" maxlength="240" required placeholder="Platform engineering mentor" /></div>
+                <div class="mentor-profile-wide"><label class="field-label" for="mentorBiography">Biography</label><textarea class="textarea" id="mentorBiography" maxlength="4000" rows="3" placeholder="Describe the experience and support you can offer."></textarea></div>
+                <div><label class="field-label" for="mentorIndustries">Industries</label><input class="input" id="mentorIndustries" maxlength="500" placeholder="Technology, healthcare" /></div>
+                <div><label class="field-label" for="mentorSkills">Skills</label><input class="input" id="mentorSkills" maxlength="500" placeholder="Kubernetes, leadership" /></div>
+                <div><label class="field-label" for="mentorLocations">Locations</label><input class="input" id="mentorLocations" maxlength="500" placeholder="Germany, remote" /></div>
+                <div><label class="field-label" for="mentorLanguages">Languages</label><input class="input" id="mentorLanguages" maxlength="500" placeholder="English, Arabic" /></div>
+                <div><label class="field-label" for="mentorExperienceLevels">Experience supported</label><input class="input" id="mentorExperienceLevels" maxlength="300" placeholder="entry, mid, senior" /></div>
+                <div><label class="field-label" for="mentorCapacity">Maximum active mentees</label><input class="input" id="mentorCapacity" type="number" min="1" max="50" value="3" /></div>
+              </div>
+              <label class="consent-row"><input id="mentorDiscoveryConsent" type="checkbox" /><span>Accept mentees and make this profile discoverable in the Orynta mentor network.</span></label>
+              <p class="muted-copy">Turning discovery off immediately returns the profile to private and removes matching consent.</p>
+              <button class="button button-dark" type="submit">Save mentor profile</button>
+            </form>
+          </details>
+          <div id="mentorMatchList" class="mentor-match-list"></div>
         </section>
 
         <section class="view" id="knowledgeView">
@@ -240,6 +383,7 @@
                 <div><label class="field-label" for="profileExperience">Experience level</label><select class="input" id="profileExperience" required><option value="">Select one</option><option value="student">Student or career starter</option><option value="early">Early career</option><option value="mid">Mid-level</option><option value="senior">Senior</option><option value="leadership">Leadership</option></select></div>
                 <div class="profile-form-wide"><label class="field-label" for="profileCareerGoal">Career direction</label><input class="input" id="profileCareerGoal" maxlength="240" placeholder="Move into a senior platform engineering role" required /></div>
                 <div class="profile-form-wide"><label class="field-label" for="profileCountry">Country or region <span class="optional-label">optional</span></label><input class="input" id="profileCountry" maxlength="120" autocomplete="country-name" placeholder="Germany" /></div>
+                <div class="profile-form-wide"><label class="field-label" for="profileGuidanceLocale">Guidance language</label><select class="input" id="profileGuidanceLocale"><option value="en">English</option><option value="ar">العربية</option></select></div>
               </div>
               <div class="form-actions"><span id="profileSaveMessage" class="inline-message" role="status"></span><button type="submit" class="button button-dark">Save personal details</button></div>
             </form>
