@@ -44,6 +44,23 @@ const [
   telemetryHelper,
   redirects,
   buildScript,
+  careerOperatingSystemMigration,
+  careerIntelligenceFunction,
+  careerIntelligenceService,
+  careerPlanningFunction,
+  careerPlanningService,
+  institutionDashboardFunction,
+  mentorNetworkFunction,
+  mentorMatchingService,
+  companyIntelligenceFunction,
+  companyIntelligenceService,
+  interviewVideoAssessFunction,
+  portfolioIntelligenceFunction,
+  portfolioIntelligenceService,
+  escoImportScript,
+  taxonomyRunbook,
+  workforceIntelligenceService,
+  labourMarketIngestFunction,
 ] = await Promise.all([
   readFile(resolve(root, "index.html"), "utf8"),
   readFile(resolve(root, "app.js"), "utf8"),
@@ -86,6 +103,23 @@ const [
   readFile(resolve(root, "supabase/functions/_shared/telemetry.ts"), "utf8"),
   readFile(resolve(root, "_redirects"), "utf8"),
   readFile(resolve(root, "scripts/build.mjs"), "utf8"),
+  readFile(resolve(root, "supabase/migrations/20260730112235_career_operating_system_foundation.sql"), "utf8"),
+  readFile(resolve(root, "supabase/functions/career-intelligence/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/_shared/career-intelligence.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/career-planning/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/_shared/career-planning.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/institution-dashboard/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/mentor-network/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/_shared/mentor-matching.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/company-intelligence/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/_shared/company-intelligence.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/interview-video-assess/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/portfolio-intelligence/index.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/_shared/portfolio-intelligence.ts"), "utf8"),
+  readFile(resolve(root, "scripts/import-esco-taxonomy.mjs"), "utf8"),
+  readFile(resolve(root, "docs/public-taxonomy.md"), "utf8"),
+  readFile(resolve(root, "supabase/functions/_shared/workforce-intelligence.ts"), "utf8"),
+  readFile(resolve(root, "supabase/functions/labour-market-ingest/index.ts"), "utf8"),
 ]);
 
 for (const surface of ["adminAuth", "adminDenied", "adminShell", "overviewView", "usersView", "waitlistView", "feedbackView", "systemView"]) {
@@ -164,6 +198,12 @@ for (const surface of ["reminderButton", "reminderModal", "reminderList", "jobIm
 for (const surface of ["interviewView", "interviewJobSelect", "generateInterviewButton", "interviewStage", "interviewBadgeList"]) {
   if (!ids.includes(surface)) throw new Error(`Interview preparation surface is missing: ${surface}`);
 }
+for (const surface of [
+  "twinView", "refreshCareerTwinButton", "careerTwinSummary", "careerGraphCanvas",
+  "careerGraphDetails", "careerRecommendationList"
+]) {
+  if (!ids.includes(surface)) throw new Error(`Career operating system surface is missing: ${surface}`);
+}
 for (const surface of ["membershipPlanModal", "currentPlanName", "currentPlanPrice", "currentPlanFeatures", "premiumPlanFeatures", "membershipPlanNote"]) {
   if (!ids.includes(surface)) throw new Error(`Membership comparison surface is missing: ${surface}`);
 }
@@ -239,6 +279,9 @@ for (const functionName of ["cv-guidance", "import-job", "interview-prep", "inte
   const pattern = new RegExp(`\\[functions\\.${functionName}\\][\\s\\S]*?verify_jwt = true`);
   if (!pattern.test(supabaseConfig)) throw new Error(`${functionName} must require a user JWT`);
 }
+if (!/\[functions\.career-intelligence\][\s\S]*?verify_jwt = true/.test(supabaseConfig)) {
+  throw new Error("Career intelligence Edge Function must require a user JWT");
+}
 if (!/\[functions\.shared-report\][\s\S]*?verify_jwt = false/.test(supabaseConfig)) {
   throw new Error("Shared reports must perform token authentication inside the function");
 }
@@ -288,6 +331,7 @@ for (const [name, source] of [
   ["export-account", exportFunction],
   ["cv-guidance", cvGuidanceFunction],
   ["import-job", importJobFunction],
+  ["career-intelligence", careerIntelligenceFunction],
 ]) {
   if (!source.includes("consumeRateLimit") || !source.includes("rateLimitResponse")) {
     throw new Error(`${name} is not connected to server-side rate limiting`);
@@ -302,6 +346,7 @@ for (const [name, source] of [
   ["cv-guidance", cvGuidanceFunction],
   ["import-job", importJobFunction],
   ["shared-report", sharedReportFunction],
+  ["career-intelligence", careerIntelligenceFunction],
 ]) {
   if (!source.includes("handleCors") || !source.includes("../_shared/http.ts")) {
     throw new Error(`${name} is not using the shared origin allowlist`);
@@ -403,6 +448,345 @@ if (!productMigration.includes("expires_at <= created_at + interval '30 days'"))
 }
 if (!app.includes('cloud.functions.invoke("export-account"') || !app.includes('cloud.from("beta_feedback").insert')) {
   throw new Error("Account export or private-beta feedback is not connected");
+}
+for (const table of [
+  "organizations", "organization_memberships", "organization_data_consents",
+  "career_taxonomy_nodes", "career_taxonomy_edges", "career_graph_nodes",
+  "career_graph_edges", "career_twins", "career_twin_snapshots",
+  "career_recommendations", "labour_market_observations", "portfolio_assets",
+  "mobility_destination_profiles",
+  "career_credentials", "career_readiness_assessments", "career_simulations",
+  "learning_roadmaps", "learning_roadmap_milestones", "organization_programmes",
+  "organization_cohorts", "organization_cohort_members", "mentor_profiles",
+  "mentor_matches", "mentorship_requests", "company_profiles",
+  "company_intelligence_briefs", "interview_video_assessments"
+]) {
+  if (!careerOperatingSystemMigration.includes(`alter table public.${table} enable row level security`)) {
+    throw new Error(`Career operating system table does not explicitly enable RLS: ${table}`);
+  }
+}
+for (const relationship of [
+  "requires", "supports", "validated_by", "demonstrated_by", "targets",
+  "applied_to", "performed_in"
+]) {
+  if (!careerOperatingSystemMigration.includes(`'${relationship}'`)) {
+    throw new Error(`Career knowledge graph relationship is missing: ${relationship}`);
+  }
+}
+if (
+  !careerOperatingSystemMigration.includes("private.organization_has_role") ||
+  !careerOperatingSystemMigration.includes("'individual_guidance' = any(consent.scopes)") ||
+  !careerOperatingSystemMigration.includes("sync_career_knowledge_graph") ||
+  !careerOperatingSystemMigration.includes("get_career_operating_system_snapshot") ||
+  !careerOperatingSystemMigration.includes("grant select, insert, update, delete on")
+) {
+  throw new Error("Multi-tenant graph access, consent boundaries, graph sync, or explicit Data API grants are incomplete");
+}
+if (
+  !careerIntelligenceFunction.includes('"sync_career_knowledge_graph"') ||
+  !careerIntelligenceFunction.includes("buildCareerIntelligence") ||
+  !careerIntelligenceFunction.includes("career_twin_snapshots") ||
+  !careerIntelligenceFunction.includes("career_recommendations") ||
+  !careerIntelligenceService.includes("required_by_saved_jobs") ||
+  !careerIntelligenceService.includes("supporting_strengths") ||
+  !careerIntelligenceService.includes("analysis_citations") ||
+  !careerIntelligenceService.includes("limitations")
+) {
+  throw new Error("Career Twin refresh or explainable recommendation evidence chain is incomplete");
+}
+if (
+  !app.includes("careerTwinSourceSignature") ||
+  !app.includes("scheduleCareerTwinRefresh") ||
+  !app.includes("refreshCareerTwinInBackground") ||
+  !app.includes("Updating from new evidence") ||
+  !app.includes('button.dataset.view === "twin" && careerTwinRefreshPending')
+) {
+  throw new Error("Career Twin source-change detection or continuous background evolution is incomplete");
+}
+if (
+  !app.includes('cloud.functions.invoke("career-intelligence"') ||
+  !app.includes("renderCareerOperatingSystem") ||
+  !app.includes("renderCareerGraph") ||
+  !app.includes('"career_recommendations", "career_twin_snapshots", "career_twins"') ||
+  !exportFunction.includes("career_graph_nodes") ||
+  !exportFunction.includes("career_twin_snapshots") ||
+  !exportFunction.includes("organization_data_consents")
+) {
+  throw new Error("Career operating system UI, clear-workspace behavior, or portable export is incomplete");
+}
+if (
+  !supabaseConfig.includes("[functions.career-planning]") ||
+  !careerPlanningFunction.includes("buildReadinessAssessment") ||
+  !careerPlanningFunction.includes("buildSimulation") ||
+  !careerPlanningFunction.includes("request_fingerprint") ||
+  !careerPlanningService.includes("hiring_probability") ||
+  !careerPlanningService.includes("personal_comparable_terminal_offer_rate_wilson_v1") ||
+  !careerPlanningService.includes("minimum_sample_size: 20") ||
+  !careerPlanningService.includes("scenario_adjustment_available: false") ||
+  !careerPlanningService.includes("not an individual hiring decision") ||
+  !careerPlanningService.includes("No sourced salary observation") ||
+  !careerPlanningService.includes("cost_of_living") ||
+  !careerPlanningService.includes("regional_comparisons") ||
+  !careerPlanningService.includes("career_progression") ||
+  !careerPlanningService.includes("skill_premium") ||
+  !careerPlanningService.includes("certification_impact") ||
+  !careerPlanningService.includes("causal: false") ||
+  !careerPlanningService.includes("mobilityProjection") ||
+  !careerPlanningService.includes("not legal advice") ||
+  !careerPlanningFunction.includes("mobility_destination_profiles") ||
+  !careerOperatingSystemMigration.includes("'DE', 'Germany', 'ألمانيا'") ||
+  !careerOperatingSystemMigration.includes("'EG', 'Egypt', 'مصر'") ||
+  !app.includes("mobilityProjectionMarkup") ||
+  !app.includes("salaryIntelligenceMarkup") ||
+  !app.includes("Historical outcome estimate") ||
+  !app.includes("does not predict an employer decision") ||
+  !app.includes("Observed differences do not establish causation") ||
+  !app.includes("Official guidance · reviewed") ||
+  !careerPlanningService.includes("verification_criteria") ||
+  !careerPlanningService.includes("learningResources") ||
+  !careerPlanningFunction.includes("resources: milestone.resources") ||
+  !careerOperatingSystemMigration.includes("set_learning_milestone_status") ||
+  !careerOperatingSystemMigration.includes("'progress_percent'") ||
+  !careerOperatingSystemMigration.includes("'salary_projection'") ||
+  !app.includes("roadmapManagementMarkup") ||
+  !app.includes("roadmap-salary") ||
+  !app.includes('cloud.rpc("set_learning_milestone_status"') ||
+  !app.includes('cloud.functions.invoke("career-planning"') ||
+  !html.includes('id="careerSimulationForm"') ||
+  !exportFunction.includes("learning_roadmap_milestones") ||
+  !app.includes('"learning_roadmap_milestones", "learning_roadmaps", "career_simulations"')
+) {
+  throw new Error("Career simulation, readiness, sourced-market safeguards, roadmap UI, export, or deletion support is incomplete");
+}
+if (
+  !html.includes('id="labourMarketCountry"') ||
+  !html.includes('id="labourMarketCity"') ||
+  !html.includes('id="labourMarketIndustry"') ||
+  !html.includes('id="labourMarketJobFamily"') ||
+  !html.includes('id="labourMarketExperience"') ||
+  !html.includes('id="labourMarketDashboard"') ||
+  !app.includes("loadLabourMarketDashboard") ||
+  !app.includes('cloud.from("labour_market_observations").select("*")') ||
+  !app.includes("Orynta does not estimate market conditions without published evidence") ||
+  !careerOperatingSystemMigration.includes("country_code, city, industry, job_family, experience_level, signal_type") ||
+  !supabaseConfig.includes("[functions.labour-market-ingest]") ||
+  !labourMarketIngestFunction.includes('app_metadata?.role !== "admin"') ||
+  !labourMarketIngestFunction.includes('onConflict: "source_name,external_id"') ||
+  !labourMarketIngestFunction.includes("observations.length > 500") ||
+  !labourMarketIngestFunction.includes("validated-source-batch-v1")
+) {
+  throw new Error("Multidimensional sourced labour-market dashboard is incomplete");
+}
+if (
+  !html.includes('id="applicationResponseRate"') ||
+  !html.includes('id="applicationInterviewConversion"') ||
+  !html.includes('id="applicationOfferConversion"') ||
+  !html.includes('id="applicationVelocity"') ||
+  !app.includes("renderApplicationIntelligence") ||
+  !careerOperatingSystemMigration.includes("cv_version_label text not null") ||
+  !app.includes("ensureJobCvVersionField") ||
+  !app.includes("Best-performing CV version") ||
+  !app.includes("cv_version_label: job.cvVersionLabel") ||
+  !app.includes("Needs at least three dated applications on the same weekday")
+) {
+  throw new Error("Application conversion, velocity, timing, company, or attribution intelligence is incomplete");
+}
+if (
+  !supabaseConfig.includes("[functions.institution-dashboard]") ||
+  !institutionDashboardFunction.includes("get_organization_employability_dashboard") ||
+  !careerOperatingSystemMigration.includes("v_minimum_group_size constant integer := 5") ||
+  !careerOperatingSystemMigration.includes("'cohort_analytics' = any(consent.scopes)") ||
+  !careerOperatingSystemMigration.includes("'programme_effectiveness'") ||
+  !careerOperatingSystemMigration.includes("'placement_rate'") ||
+  !html.includes('id="institutionDashboardContent"') ||
+  !html.includes('id="institutionConsentList"') ||
+  !app.includes("renderInstitutionDashboard") ||
+  !app.includes('cloud.functions.invoke("institution-dashboard"') ||
+  !app.includes('action: "my_consents"') ||
+  !app.includes('action: "set_consent"') ||
+  !institutionDashboardFunction.includes('"my_consents", "set_consent"') ||
+  !institutionDashboardFunction.includes('.eq("user_id", userId)') ||
+  !institutionDashboardFunction.includes("participant-controls-v1") ||
+  !institutionDashboardFunction.includes("You are not a participant in this organization") ||
+  !exportFunction.includes("organization_cohort_memberships")
+) {
+  throw new Error("Consent-aware university/government cohort analytics, privacy suppression, UI, or portability is incomplete");
+}
+if (
+  !supabaseConfig.includes("[functions.mentor-network]") ||
+  !mentorNetworkFunction.includes("buildMentorMatches") ||
+  !mentorNetworkFunction.includes('"request"') ||
+  !mentorNetworkFunction.includes('"profile"') ||
+  !mentorNetworkFunction.includes("explicit-discovery-consent-v1") ||
+  !mentorNetworkFunction.includes('.eq("status", "suggested")') ||
+  !mentorMatchingService.includes("skill_gaps_supported") ||
+  !mentorMatchingService.includes("location_alignment") ||
+  !mentorMatchingService.includes("language_alignment") ||
+  !mentorMatchingService.includes("relationship quality") ||
+  !careerOperatingSystemMigration.includes("matching_consent_at") ||
+  !html.includes('id="mentorMatchList"') ||
+  !html.includes('id="mentorProfileForm"') ||
+  !html.includes('id="mentorDiscoveryConsent"') ||
+  !app.includes("renderMentorNetwork") ||
+  !app.includes("renderMentorProfile") ||
+  !app.includes("Your mentor profile is private and new suggestions were removed") ||
+  !app.includes('cloud.functions.invoke("mentor-network"') ||
+  !app.includes('"mentor_matches"') ||
+  !exportFunction.includes("mentorship_requests")
+) {
+  throw new Error("Opt-in mentor discovery, explainable matching, introduction requests, portability, or derived-data deletion is incomplete");
+}
+if (
+  !supabaseConfig.includes("[functions.company-intelligence]") ||
+  !companyIntelligenceFunction.includes("buildCompanyBrief") ||
+  !companyIntelligenceService.includes("recent_news") ||
+  !companyIntelligenceService.includes("interview_expectations") ||
+  !companyIntelligenceService.includes("competitors") ||
+  !companyIntelligenceService.includes("source_freshness_at") ||
+  !companyIntelligenceService.includes("No published company profile is available") ||
+  !html.includes('id="generateCompanyBriefButton"') ||
+  !app.includes("renderCompanyBrief") ||
+  !app.includes('cloud.functions.invoke("company-intelligence"') ||
+  !app.includes('"company_intelligence_briefs"') ||
+  !exportFunction.includes("company_intelligence_briefs")
+) {
+  throw new Error("Source-aware company briefing, interview integration, unavailable-state handling, portability, or deletion is incomplete");
+}
+if (
+  !supabaseConfig.includes("[functions.interview-video-assess]") ||
+  !interviewVideoAssessFunction.includes("gaze_alignment") ||
+  !interviewVideoAssessFunction.includes("posture_stability") ||
+  !interviewVideoAssessFunction.includes("gesture_use") ||
+  !interviewVideoAssessFunction.includes("confidence_presentation") ||
+  !interviewVideoAssessFunction.includes("answer_structure") ||
+  !interviewVideoAssessFunction.includes("technical_depth") ||
+  !interviewVideoAssessFunction.toLowerCase().includes("do not perform facial recognition") ||
+  !app.includes("startInterviewVideoRecording") ||
+  !app.includes("The recording is not stored") ||
+  !app.includes('cloud.functions.invoke("interview-video-assess"') ||
+  !app.includes('"interview_video_assessments"') ||
+  !interviewTranscribeFunction.includes('"video/webm"') ||
+  !exportFunction.includes("interview_video_assessments")
+) {
+  throw new Error("Private video capture, transcript metrics, scoped visual coaching, safety boundaries, portability, or deletion is incomplete");
+}
+if (
+  !supabaseConfig.includes("[functions.portfolio-intelligence]") ||
+  !portfolioIntelligenceFunction.includes("analyse_portfolio") ||
+  !portfolioIntelligenceFunction.includes("verify_credential") ||
+  !portfolioIntelligenceFunction.includes("recipient_matches_authenticated_email") ||
+  !portfolioIntelligenceFunction.includes("providerPolicies") ||
+  !portfolioIntelligenceFunction.includes("official_provider_page_observation") ||
+  !portfolioIntelligenceFunction.includes("credential-provider-verification-v2") ||
+  !portfolioIntelligenceFunction.includes("stored_expiry_check") ||
+  !portfolioIntelligenceFunction.includes("revoked") ||
+  !portfolioIntelligenceService.includes("documentation") ||
+  !portfolioIntelligenceService.includes("testing") ||
+  !portfolioIntelligenceService.includes("ci_cd") ||
+  !portfolioIntelligenceService.includes("architecture") ||
+  !portfolioIntelligenceService.includes("code_organisation") ||
+  !portfolioIntelligenceService.includes("technology_diversity") ||
+  !portfolioIntelligenceService.includes("activity_consistency") ||
+  !html.includes('id="portfolioAssetForm"') ||
+  !html.includes('id="careerCredentialForm"') ||
+  !app.includes('cloud.functions.invoke("portfolio-intelligence"') ||
+  !app.includes('cloud.from("portfolio_assets").insert') ||
+  !app.includes('cloud.from("career_credentials").insert')
+) {
+  throw new Error("Evidence-scoped portfolio analysis or conservative credential verification is incomplete");
+}
+for (const provider of ["credly", "microsoft_learn", "aws", "google_cloud", "cisco", "azure", "open_badges"]) {
+  if (!careerOperatingSystemMigration.includes(`'${provider}'`) || !html.includes(`value="${provider}"`)) {
+    throw new Error(`Certification provider integration is missing: ${provider}`);
+  }
+}
+if (
+  !careerOperatingSystemMigration.includes("'issuer_observed'") ||
+  !app.includes("No expiry date recorded") ||
+  !app.includes("Provider verification guidance")
+) {
+  throw new Error("Credential expiry tracking or conservative issuer-observation state is incomplete");
+}
+if (
+  !careerIntelligenceFunction.includes('"career_taxonomy_nodes"') ||
+  !careerIntelligenceFunction.includes('"labour_market_observations"') ||
+  !careerIntelligenceFunction.includes('"portfolio_assets"') ||
+  !careerIntelligenceFunction.includes('"career_credentials"') ||
+  !careerIntelligenceFunction.includes('"company_profiles"') ||
+  !careerIntelligenceService.includes("certifications_that_validate_it") ||
+  !careerIntelligenceService.includes("related_taxonomy_skills") ||
+  !careerIntelligenceService.includes("market_signals") ||
+  !careerIntelligenceService.includes("portfolio_evidence") ||
+  !careerIntelligenceService.includes("preferredIndustries") ||
+  !careerIntelligenceService.includes('evidenceReference("portfolio_asset"') ||
+  !careerIntelligenceService.includes('evidenceReference("career_credential"') ||
+  !careerIntelligenceService.includes("estimated_match_score_delta") ||
+  !careerIntelligenceService.includes("calibrated_hiring_probability: false") ||
+  !escoImportScript.includes('taxonomy: "esco"') ||
+  !escoImportScript.includes("/occupation.*skill.*relation") ||
+  !escoImportScript.includes('onConflict: "taxonomy,external_id"') ||
+  !taxonomyRunbook.includes("--dry-run") ||
+  !taxonomyRunbook.includes("career_taxonomy_node")
+) {
+  throw new Error("Unified recommendation evidence or versioned public ESCO taxonomy ingestion is incomplete");
+}
+if (
+  !institutionDashboardFunction.includes("buildGovernmentWorkforceDashboard") ||
+  !institutionDashboardFunction.includes('"government"') ||
+  !institutionDashboardFunction.includes('"labour_market_observations"') ||
+  !institutionDashboardFunction.includes("organization_programmes") ||
+  !workforceIntelligenceService.includes("regional_skill_shortages") ||
+  !workforceIntelligenceService.includes("workforce_trends") ||
+  !workforceIntelligenceService.includes("skills_forecasting") ||
+  !workforceIntelligenceService.includes("programme_completion") ||
+  !workforceIntelligenceService.includes("not a predictive forecast") ||
+  !app.includes("governmentWorkforceMarkup") ||
+  !app.includes("Government workforce intelligence")
+) {
+  throw new Error("Government workforce trends, shortage signals, programme reporting, privacy handling, or sourced trajectories are incomplete");
+}
+if (
+  !careerOperatingSystemMigration.includes("'github_repository'") ||
+  !careerOperatingSystemMigration.includes("'portfolio:' || asset.id::text") ||
+  !careerOperatingSystemMigration.includes("'project:portfolio:' || asset.id::text") ||
+  !careerOperatingSystemMigration.includes("This project is demonstrated by its linked public GitHub repository") ||
+  !careerOperatingSystemMigration.includes("'credential:' || credential.id::text") ||
+  !careerOperatingSystemMigration.includes("'technology:' || lower") ||
+  !careerOperatingSystemMigration.includes("'course:' || md5") ||
+  !careerOperatingSystemMigration.includes("'learning_roadmap_milestone'") ||
+  !careerOperatingSystemMigration.includes("This roadmap course supports the user’s stated career goal") ||
+  !careerOperatingSystemMigration.includes("'analysis_confidence'") ||
+  !careerOperatingSystemMigration.includes("taxonomy_node_id = taxonomy.taxonomy_id") ||
+  !careerOperatingSystemMigration.includes("'validated_by'") ||
+  !careerOperatingSystemMigration.includes("'demonstrated_by'") ||
+  !app.includes("skillGraphExpandedMarkup") ||
+  !app.includes("loadSkillGraphDetail") ||
+  !app.includes("Parent skills") ||
+  !app.includes("Child skills") ||
+  !app.includes("Learning resources") ||
+  !app.includes("Saved jobs requiring it") ||
+  !app.includes("User evidence") ||
+  !app.includes("AI confidence")
+) {
+  throw new Error("Skill graph taxonomy, market, hierarchy, resources, credentials, projects, jobs, evidence, or confidence detail is incomplete");
+}
+if (
+  !html.includes('id="careerGuidanceLocale"') ||
+  !html.includes('id="profileGuidanceLocale"') ||
+  !careerOperatingSystemMigration.includes("guidance_locale text not null default 'en'") ||
+  !careerOperatingSystemMigration.includes("trajectory_ar text not null") ||
+  !careerOperatingSystemMigration.includes("summary_ar text not null") ||
+  !careerOperatingSystemMigration.includes("title_ar text not null") ||
+  !careerOperatingSystemMigration.includes("verification_criteria_ar text not null") ||
+  !careerPlanningService.includes("limitations_ar") ||
+  !careerPlanningService.includes("title_ar: `ابنِ الأساسيات") ||
+  !careerPlanningFunction.includes("goal_ar:") ||
+  !app.includes("مخطط التنقل المهني") ||
+  !app.includes("خارطة التعلم الشخصية") ||
+  !app.includes("verification_criteria_ar") ||
+  !app.includes('result.setAttribute("dir", arabic ? "rtl" : "ltr")')
+) {
+  throw new Error("Bilingual Career Twin, recommendation, mobility, simulation, and roadmap guidance is incomplete");
 }
 if (!deleteFunction.includes("recentlyIssued") || !app.includes("deleteAccountForm")) {
   throw new Error("Account deletion must require recent password confirmation");

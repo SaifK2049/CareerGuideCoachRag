@@ -55,5 +55,14 @@
     "tslib@2.8.1": {
       "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="
     }
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@supabase/supabase-js@2.110.6",
+        "npm:pdfjs-dist@6.1.200",
+        "npm:tesseract.js@5.1.1"
+      ]
+    }
   }
 }
