@@ -295,7 +295,7 @@ Deno.serve(async (request) => {
     const sessionId = String(payload.sessionId || "");
     const jobId = String(payload.jobId || "");
     if (action === "generate" && !uuidPattern.test(jobId)) {
-      throw new InterviewError("INVALID_REQUEST", 400, "Choose a valid job to practice.");
+      throw new InterviewError("INVALID_REQUEST", 400, "Choose a valid job to practise.");
     }
 
     admin = createClient<any>(
